@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & secrets (ASLA commit'lenmez)
+.env
+.env.local
+*.local
+
+# Databases (yerel geliştirme)
+*.db
+*.db-journal
+*.sqlite
+prisma/dev.db*
+
+# Logs
+*.log
+logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code yerel/kullaniciya ozel ayarlar
+.claude/settings.local.json
+
+# Backups / artefacts
+backups/
+coverage/
