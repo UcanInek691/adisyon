@@ -1,0 +1,38 @@
+import { z } from 'zod';
+
+/** Query string 'true'/'false' -> boolean. */
+const boolQuery = z
+  .enum(['true', 'false'])
+  .transform((v) => v === 'true')
+  .optional();
+
+// --- Salon (Hall) ---
+export const createHallSchema = z.object({
+  name: z.string().min(1),
+  sortOrder: z.number().int().optional(),
+  isActive: z.boolean().optional(),
+});
+export const updateHallSchema = createHallSchema.partial();
+export type CreateHallDto = z.infer<typeof createHallSchema>;
+export type UpdateHallDto = z.infer<typeof updateHallSchema>;
+
+// --- Masa (Table) ---
+// Not: `status` bilerek yok. Durum gecisleri (empty/occupied/reserved) siparise
+// baglidir -> Siparis modulunde yonetilir. Burada yalnizca tanim + kat plani.
+export const createTableSchema = z.object({
+  hallId: z.string().min(1),
+  name: z.string().min(1),
+  seats: z.number().int().positive().optional(),
+  posX: z.number().int().nullish(),
+  posY: z.number().int().nullish(),
+  isActive: z.boolean().optional(),
+});
+export const updateTableSchema = createTableSchema.partial();
+export type CreateTableDto = z.infer<typeof createTableSchema>;
+export type UpdateTableDto = z.infer<typeof updateTableSchema>;
+
+export const tableQuerySchema = z.object({
+  hallId: z.string().optional(),
+  active: boolQuery,
+});
+export type TableQueryDto = z.infer<typeof tableQuerySchema>;

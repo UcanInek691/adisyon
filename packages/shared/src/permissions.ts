@@ -9,6 +9,7 @@ export const Permission = {
   PriceChange: 'price.change',
   // Masa & siparis
   TableView: 'table.view',
+  TableManage: 'table.manage', // salon/masa tanimi + kat plani (Owner)
   OrderCreate: 'order.create',
   OrderItemEdit: 'order.item.edit',
   OrderSendKitchen: 'order.send_kitchen',

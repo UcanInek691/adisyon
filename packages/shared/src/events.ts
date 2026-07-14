@@ -64,6 +64,9 @@ export const DomainEventName = {
   ProductCreated: 'product.created',
   ProductUpdated: 'product.updated',
   ProductDeleted: 'product.deleted',
+  TableCreated: 'table.created',
+  TableUpdated: 'table.updated',
+  TableDeleted: 'table.deleted',
 } as const;
 
 export type DomainEventName = (typeof DomainEventName)[keyof typeof DomainEventName];
@@ -74,4 +77,11 @@ export interface ProductEventPayload {
   name: string;
   categoryId: string;
   salePrice: number; // kurus
+}
+
+// --- Masa event payload'lari ---
+export interface TableEventPayload {
+  tableId: string;
+  hallId: string;
+  name: string;
 }
