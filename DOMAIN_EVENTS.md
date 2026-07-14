@@ -40,6 +40,27 @@
 
 ---
 
+### `table.created`
+- **Amaci:** Yeni masa tanimlandi (salon + kat plani).
+- **Yayinlandigi yer:** `TablesService.createTable` (post-commit).
+- **Payload:** `{ tableId, hallId, name }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, canli masa katmani (WS), Sync.
+
+### `table.updated`
+- **Amaci:** Masa tanimi/konumu (posX/posY) guncellendi.
+- **Yayinlandigi yer:** `TablesService.updateTable` (post-commit).
+- **Payload:** `{ tableId, hallId, name }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, canli masa katmani (WS), Sync.
+
+### `table.deleted`
+- **Amaci:** Masa soft-delete edildi.
+- **Yayinlandigi yer:** `TablesService.deleteTable` (post-commit; payload silinmeden onceki durum).
+- **Payload:** `{ tableId, hallId, name }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, Sync.
+
+> Not: Masa **durum** event'leri (`table.reserved`, `table.merged`, `table.moved`, occupied gecisi)
+> siparise bagli oldugu icin Siparis modulunde eklenecek.
+
 ## Planlanan Event'ler (modul gelince eklenecek)
 
 Asagidakiler kod sozlesmesine (`DomainEventName`) ve bu katalogsa ilgili modul inşa edilirken
