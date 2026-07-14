@@ -149,3 +149,50 @@ export const SystemRole = {
   Waiter: 'waiter',
 } as const;
 export type SystemRole = (typeof SystemRole)[keyof typeof SystemRole];
+
+// -----------------------------------------------------------------------------
+// ISTEMCI-OFFLINE (Faz 1). Waiter tablet -> yerel sunucu. Bkz. OFFLINE_DESIGN.md
+// -----------------------------------------------------------------------------
+
+/** Offline istemci mutasyon turleri. OFFLINE_DESIGN.md §5.1 */
+export const OfflineMutationType = {
+  OpenTable: 'OPEN_TABLE',
+  AddLine: 'ADD_LINE',
+  UpdateLineQty: 'UPDATE_LINE_QTY',
+  AddNote: 'ADD_NOTE',
+  SubmitOrder: 'SUBMIT_ORDER',
+} as const;
+export type OfflineMutationType = (typeof OfflineMutationType)[keyof typeof OfflineMutationType];
+
+/** Sunucunun bir offline mutasyona verdigi sonuc. OFFLINE_DESIGN.md §7.1 */
+export const OfflineMutationResult = {
+  Applied: 'applied',
+  Duplicate: 'duplicate',
+  Conflict: 'conflict',
+  Rejected: 'rejected',
+} as const;
+export type OfflineMutationResult = (typeof OfflineMutationResult)[keyof typeof OfflineMutationResult];
+
+/** Offline cakisma review nedeni. OFFLINE_DESIGN.md §8 */
+export const OfflineReviewReason = {
+  TableClosed: 'table_closed',
+  TableMoved: 'table_moved',
+  ProductInactive: 'product_inactive',
+  Other: 'other',
+} as const;
+export type OfflineReviewReason = (typeof OfflineReviewReason)[keyof typeof OfflineReviewReason];
+
+/** Offline review durumu. OFFLINE_DESIGN.md §9.2 */
+export const OfflineReviewStatus = {
+  Open: 'open',
+  Resolved: 'resolved',
+  Rejected: 'rejected',
+} as const;
+export type OfflineReviewStatus = (typeof OfflineReviewStatus)[keyof typeof OfflineReviewStatus];
+
+/** Audit kaydinin kaynagi (online mi offline replay mi). OFFLINE_DESIGN.md §12 */
+export const AuditOrigin = {
+  Online: 'online',
+  Offline: 'offline',
+} as const;
+export type AuditOrigin = (typeof AuditOrigin)[keyof typeof AuditOrigin];

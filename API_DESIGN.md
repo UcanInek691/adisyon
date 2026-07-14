@@ -1,9 +1,9 @@
-# API_DESIGN.md — API Tasarımı (TASLAK — onay bekliyor)
+# API_DESIGN.md — API Tasarımı
 
 > Faz 1 yerel backend'in (NestJS) REST + WebSocket sözleşmeleri. Tüm giriş/çıkışlar
 > `packages/shared` içindeki **Zod** şemalarından türetilir (tek şema → backend validation + frontend tip).
 
-**Durum:** Taslak · **Sürüm:** 0.1 · **Son güncelleme:** 2026-07-13
+**Durum:** ✅ Kabul (2026-07-13) · istemci-offline (Faz 1) uçları eklendi (2026-07-14) · **Sürüm:** 1.1 · **Son güncelleme:** 2026-07-14
 
 ---
 
@@ -14,7 +14,7 @@
 - **Kimlik:** JWT `Authorization: Bearer <access>` + refresh token (cihaz bazlı oturum).
 - **Doğrulama:** her endpoint girişte Zod ile parse edilir; geçersizse `422`.
 - **Yetki:** her endpoint'te guard + **permission key** kontrolü (frontend gizleme güvenlik değil — `SECURITY.md`).
-- **Offline yazma:** yazma istekleri **önce lokale** yazılır (gerçek yazma), yanıt döner; Faz 2'de ayrıca outbox'a düşer. İstemci için davranış aynıdır (internet varsa da yoksa da).
+- **Offline yazma (iki sınır):** (A) **Sunucu**: yazma istekleri **önce lokale** yazılır (gerçek yazma), yanıt döner; Faz 2'de ayrıca outbox'a düşer. (B) **Waiter tablet**: LAN koparsa mutasyonlar tarayıcı outbox'ında (IndexedDB) birikir, reconnect'te §5.11 uçlarıyla replay edilir. Detay: `OFFLINE_DESIGN.md`.
 - **Idempotency:** para/kritik yazımlarda `Idempotency-Key` başlığı zorunlu (aşağıda).
 - **Zaman:** tüm tarihler UTC ISO-8601.
 - **Para:** tüm parasal alanlar **integer kuruş**. Miktar **int × 1000**.
@@ -56,6 +56,7 @@
   - İlk kez → işlenir, sonuç anahtarla eşlenir.
   - Aynı anahtar tekrar → **işlem tekrar edilmez**, ilk sonuç döner (§8 sözleşme: aynı işlem iki kez işlenmez).
 - Bu, hem ağ tekrarını hem Faz 2 sync tekrarını kapsar (aynı `idempotency_key` DB'de unique).
+- **Toplu offline replay (Faz 1):** Waiter tabletinin biriken mutasyonları `POST /sync/mutations` ile toplu gelir; her mutasyon kendi `clientOpId` (ULID) anahtarını taşır — `Idempotency-Key` başlığının batch içi karşılığıdır. Sunucu `ProcessedClientOp` defterinde dedup eder (§5.11).
 
 ---
 
@@ -71,7 +72,7 @@
 
 - Başarısız girişler `users.failed_login_count` artırır; eşik aşımında `locked_until` (brute-force koruması).
 - PIN girişi rate-limit + gecikmeli (Waiter kolay tahmin edilmesin).
-- Access token kısa ömür (~15 dk), refresh uzun (cihaz bazlı, `sessions`).
+- **Token ömrü role bağlı:** Owner access ~15 dk (ana makine hep bağlı). **Waiter access 12 saat** (tam vardiya; tablet offline'dayken oturum mesai ortasında kilitlenmez), refresh 30 gün (cihaz bazlı, `sessions`). Reconnect'te sessiz yenileme. Bkz. `OFFLINE_DESIGN.md §12`.
 
 ---
 
@@ -145,7 +146,27 @@
 - `GET /updates/check` · `POST /updates/apply` · `POST /updates/rollback`
 - `GET/POST /plugins` · `POST /plugins/:id/enable|disable` (yükleme/kaldırma **audit**)
 - `POST /backups` · `GET /backups` · `POST /backups/:id/restore` (Owner)
-- `GET /sync/status` — çevrimiçi/çevrimdışı/bekleyen kayıt sayısı (Faz 2; Faz 1 stub)
+- `GET /sync/status` — çevrimiçi/çevrimdışı/bekleyen kayıt sayısı (Faz 2 bulut sync; Faz 1 stub)
+
+### 5.11 İstemci-Offline Senkron (Faz 1) — Waiter tablet ⇄ yerel sunucu
+
+> Faz 2 bulut sync'ten (§5.10 `/sync/status`) **ayrı** bir sınırdır. Detay: `OFFLINE_DESIGN.md`.
+
+- `GET /sync/health` — hafif bağlanabilirlik yoklaması (heartbeat). `navigator.onLine` güvenilmez;
+  gerçek erişilebilirliği bu belirler. Yanıt: `{ serverTime }` (küçük).
+- `POST /sync/mutations` — tabletin biriken outbox'ını **toplu + idempotent** işler.
+  - Gövde: `{ deviceId, mutations: [ { clientOpId, type, payload, baseVersion? } ] }`
+  - `type`: `OFFLINE_DESIGN.md §5.1` (OPEN_TABLE | ADD_LINE | UPDATE_LINE_QTY | ADD_NOTE | SUBMIT_ORDER)
+  - Her mutasyon **online yolla ortak domain servisini** çağırır; `clientOpId` `ProcessedClientOp`'ta dedup edilir.
+  - Yanıt: `{ results: [ { clientOpId, status, serverId?, serverVersion?, reviewId?, reason? } ], serverTime }`
+    - `status`: `applied | duplicate | conflict | rejected` (`OfflineMutationResult`)
+    - `conflict` → `PendingOfflineReview` kaydı (`reviewId`, `reason`: `table_closed|table_moved|product_inactive`) → Owner onayı
+- `GET /sync/snapshot` — reconnect sonrası **tek istekte** aktif durum: açık masalar + adisyon başlıkları + katalog/fiyat özeti. Cache'i tazeler. (Delta/cursor YOK — Faz 1 kararı; Faz 2'ye bırakıldı.)
+- **Owner review uçları:**
+  - `GET /offline-reviews?status=open` — bekleyen çakışmalar (Owner)
+  - `POST /offline-reviews/:id/resolve` `{ resolution: yeni_adisyon|yeniden_ac|reddet }` — çöz (Owner, **audit**)
+
+**Reconnect akışı:** `/sync/health` OK → `POST /sync/mutations` (push) → `GET /sync/snapshot` (pull) → WS'e dön.
 
 ---
 
@@ -166,6 +187,8 @@
 | `sync.status.changed` | `{ online, pending }` (Faz 2) |
 
 > İlke: WebSocket **bildirimdir**, kaynak-doğru veri REST'ten çekilir (event geldi → ilgili kaydı invalidate et — TanStack Query).
+
+> **Faz 1 istemci-offline:** WS kopması bir bağlantı-kopması sinyalidir → tablet offline moduna geçer, mutasyonlar outbox'a düşer. Bağlantı tespiti WS + `GET /sync/health` iledir (§5.11). `sync.status.changed` olayı Faz 2 bulut sync içindir.
 
 ---
 

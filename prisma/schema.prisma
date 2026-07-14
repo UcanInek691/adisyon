@@ -421,6 +421,9 @@ model Order {
   deviceId  String?   @map("device_id")
   syncState String    @default("pending") @map("sync_state")
 
+  /// Offline istemci mutasyon kimligi (idempotency + izlenebilirlik). Bkz. OFFLINE_DESIGN.md §6
+  clientOpId String? @unique @map("client_op_id") // ULID (OPEN_TABLE mutasyonu)
+
   @@unique([branchId, orderNo])
   @@index([branchId, status])
   @@index([tableId])
@@ -452,6 +455,9 @@ model OrderItem {
   version   Int       @default(1)
   deviceId  String?   @map("device_id")
   syncState String    @default("pending") @map("sync_state")
+
+  /// Offline istemci mutasyon kimligi (idempotency + izlenebilirlik). Bkz. OFFLINE_DESIGN.md §6
+  clientOpId String? @unique @map("client_op_id") // ULID (ADD_LINE mutasyonu)
 
   @@index([orderId])
   @@index([productId])
@@ -945,6 +951,11 @@ model AuditLog {
   deviceId  String?  @map("device_id")
   syncState String   @default("pending") @map("sync_state")
 
+  /// Kaydin kaynagi: online mi yoksa offline replay mi. Bkz. OFFLINE_DESIGN.md §12
+  origin          String    @default("online") // AuditOrigin: online | offline
+  clientOpId      String?   @map("client_op_id") // offline ise iliskili mutasyon ULID
+  clientCreatedAt DateTime? @map("client_created_at") // offline ise istemci uretim zamani
+
   @@index([createdAt])
   @@index([entityType, entityId])
   @@index([action])
@@ -1002,6 +1013,55 @@ model Conflict {
   syncState String    @default("pending") @map("sync_state")
 
   @@map("conflicts")
+}
+
+// =============================================================================
+// ISTEMCI-OFFLINE (Faz 1): Waiter tablet -> yerel sunucu. Faz 2 bulut sync'ten AYRI.
+// Bkz. OFFLINE_DESIGN.md
+// =============================================================================
+
+/// Offline istemci mutasyonlari icin idempotency defteri (append-only).
+/// Ayni clientOpId ikinci kez gelirse yeniden islenmez, ilk sonuc doner (replay guvenli).
+/// Bkz. OFFLINE_DESIGN.md §6, §9.1
+model ProcessedClientOp {
+  id           String  @id // ULID
+  clientOpId   String  @unique @map("client_op_id") // ULID (istemci uretimi)
+  deviceId     String  @map("device_id")
+  mutationType String  @map("mutation_type") // OfflineMutationType
+  resultStatus String  @map("result_status") // OfflineMutationResult: applied | conflict | rejected
+  resultRef    String? @map("result_ref") // olusan varlik id (varsa)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([deviceId, createdAt])
+  @@map("processed_client_ops")
+}
+
+/// Otomatik uygulanamayan (cakisan) offline mutasyonlarin Owner onay kuyrugu (Faz 1).
+/// Faz 2 bulut `Conflict` modelinden bilincli olarak ayridir. Bkz. OFFLINE_DESIGN.md §8, §9.2
+model PendingOfflineReview {
+  id              String    @id // ULID
+  branchId        String    @map("branch_id")
+  deviceId        String    @map("device_id") // mutasyonu ureten tablet
+  waiterId        String    @map("waiter_id")
+  clientOpId      String    @map("client_op_id")
+  mutationType    String    @map("mutation_type") // OfflineMutationType
+  mutationPayload String    @map("mutation_payload") // JSON (TEXT)
+  reason          String // OfflineReviewReason: table_closed | table_moved | product_inactive | other
+  status          String    @default("open") // OfflineReviewStatus: open | resolved | rejected
+  resolution      String? // yeni_adisyon | yeniden_ac | reddet
+  resolvedBy      String?   @map("resolved_by")
+  resolvedAt      DateTime? @map("resolved_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId, status])
+  @@index([clientOpId])
+  @@map("pending_offline_reviews")
 }
 
 model LicenseInfo {
