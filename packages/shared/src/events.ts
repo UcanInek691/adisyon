@@ -67,6 +67,10 @@ export const DomainEventName = {
   TableCreated: 'table.created',
   TableUpdated: 'table.updated',
   TableDeleted: 'table.deleted',
+  OrderCreated: 'order.created',
+  OrderUpdated: 'order.updated',
+  OrderItemAdded: 'order.item.added',
+  OrderItemVoided: 'order.item.voided',
 } as const;
 
 export type DomainEventName = (typeof DomainEventName)[keyof typeof DomainEventName];
@@ -84,4 +88,21 @@ export interface TableEventPayload {
   tableId: string;
   hallId: string;
   name: string;
+}
+
+// --- Siparis event payload'lari ---
+export interface OrderEventPayload {
+  orderId: string;
+  orderNo: string;
+  tableId?: string;
+  status: string;
+  grandTotal: number; // kurus
+}
+
+export interface OrderItemEventPayload {
+  orderId: string;
+  orderItemId: string;
+  productId: string;
+  quantity: number; // milis
+  lineTotal: number; // kurus
 }

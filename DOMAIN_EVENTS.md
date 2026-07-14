@@ -61,6 +61,32 @@
 > Not: Masa **durum** event'leri (`table.reserved`, `table.merged`, `table.moved`, occupied gecisi)
 > siparise bagli oldugu icin Siparis modulunde eklenecek.
 
+### `order.created`
+- **Amaci:** Yeni adisyon acildi (masa varsa occupied'a gecti).
+- **Yayinlandigi yer:** `OrdersService.openOrder` (post-commit).
+- **Payload:** `{ orderId, orderNo, tableId?, status, grandTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, canli masa (WS), Sync, (mutfak yazdirma send ile).
+
+### `order.item.added`
+- **Amaci:** Adisyona kalem eklendi (fiyat/vergi snapshot alinmis).
+- **Yayinlandigi yer:** `OrdersService.addItem` (post-commit).
+- **Payload:** `{ orderId, orderItemId, productId, quantity, lineTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, Sync.
+
+### `order.item.voided`
+- **Amaci:** Kalem iptal edildi (void; Owner).
+- **Yayinlandigi yer:** `OrdersService.voidItem` (post-commit).
+- **Payload:** `{ orderId, orderItemId, productId, quantity, lineTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Audit ozel, Dashboard, Sync.
+
+### `order.updated`
+- **Amaci:** Adisyon toplamlari/durumu degisti (kalem ekle/sil/void, iptal).
+- **Yayinlandigi yer:** `OrdersService` (addItem/updateItem/removeItem/voidItem/cancelOrder, post-commit).
+- **Payload:** `{ orderId, orderNo, tableId?, status, grandTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: canli masa (WS), Dashboard, Sync.
+
+> Not: `order.paid` / `order.closed` / `receipt.printed` Odeme modulunde; mutfak `order.item.sent` PR2'de.
+
 ## Planlanan Event'ler (modul gelince eklenecek)
 
 Asagidakiler kod sozlesmesine (`DomainEventName`) ve bu katalogsa ilgili modul inşa edilirken

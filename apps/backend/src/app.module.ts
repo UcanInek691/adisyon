@@ -8,6 +8,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { TablesModule } from './tables/tables.module';
+import { OrdersModule } from './orders/orders.module';
 import { AuditModule } from './common/audit/audit.module';
 import { EventBusModule } from './common/events/event-bus.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -44,6 +45,7 @@ const isProd = process.env.NODE_ENV === 'production';
     AuthModule,
     CatalogModule,
     TablesModule,
+    OrdersModule,
   ],
   providers: [
     // Sira onemli: once kimlik (req.user'i doldurur), sonra izin denetimi.
