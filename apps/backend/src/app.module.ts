@@ -6,6 +6,8 @@ import { newId } from '@ado/shared';
 import { ConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
+import { CatalogModule } from './catalog/catalog.module';
+import { AuditModule } from './common/audit/audit.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { AllExceptionsFilter } from './common/http/all-exceptions.filter';
@@ -35,7 +37,9 @@ const isProd = process.env.NODE_ENV === 'production';
     }),
     ConfigModule,
     PrismaModule,
+    AuditModule,
     AuthModule,
+    CatalogModule,
   ],
   providers: [
     // Sira onemli: once kimlik (req.user'i doldurur), sonra izin denetimi.
