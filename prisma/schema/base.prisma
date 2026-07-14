@@ -1,0 +1,31 @@
+// ==============================================================================
+// BASE.prisma — Sahip: CEKIRDEK — datasource + generator
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// Adisyon / POS - Prisma Semasi (Faz 1: SQLite)
+// Kaynak tasarim: DATABASE_DESIGN.md  |  Kurallar: CONVENTIONS.md
+//
+// GENEL KURALLAR (DATABASE_DESIGN.md §0):
+//  - Birincil anahtar: id = ULID (uygulama uretir; auto-increment YOK).
+//  - SyncBase alanlari HER modelde bulunur (audit_logs haric - degismezlik).
+//  - Para: Int "kurus". Miktar: Int "milis" (x1000). Oran: Int "binde" (permille).
+//  - Enum: SQLite native desteklemez -> String + @ado/shared ile dogrulama.
+//  - JSON: SQLite'ta guvenli olmasi icin String (TEXT) olarak saklanir; uygulama
+//    serialize/deserialize eder.
+//  - Soft delete: deleted_at (tombstone). Fiziksel silme yok.
+//  - Cross-cutting alanlar (branch_id, device_id, *_by kullanici referanslari)
+//    bilincli olarak Prisma iliskisi DEGIL, indeksli String kolon olarak tutulur;
+//    boylece Branch/Device/User modelleri onlarca ters-iliskiyle sismez.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}

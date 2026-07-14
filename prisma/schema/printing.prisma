@@ -1,0 +1,78 @@
+// ==============================================================================
+// PRINTING.prisma — Sahip: CAGRI (Yazdirma)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// YAZDIRMA
+// =============================================================================
+
+model Printer {
+  id           String       @id
+  branchId     String       @map("branch_id")
+  name         String
+  driverId     String       @map("driver_id") // eklenti id
+  connection   String // PrinterConnection
+  address      String? // USB path / IP:port / spooler adi
+  paperWidth   Int          @map("paper_width") // 58 | 80
+  isDefault    Boolean      @default(false) @map("is_default")
+  capabilities String? // JSON (TEXT): cutter, drawer, qr...
+  isActive     Boolean      @default(true) @map("is_active")
+  printJobs    PrintJob[]
+  printRoutes  PrintRoute[]
+  receipts     Receipt[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("printers")
+}
+
+model PrintRoute {
+  id           String  @id
+  branchId     String  @map("branch_id")
+  documentType String  @map("document_type") // DocumentType
+  printerId    String  @map("printer_id")
+  printer      Printer @relation(fields: [printerId], references: [id])
+  categoryId   String? @map("category_id") // kategoriye ozel mutfak (plain)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId, documentType])
+  @@map("print_routes")
+}
+
+model PrintJob {
+  id           String    @id
+  branchId     String    @map("branch_id")
+  printerId    String    @map("printer_id")
+  printer      Printer   @relation(fields: [printerId], references: [id])
+  documentType String    @map("document_type")
+  payload      String // soyut PrintDocument (JSON TEXT)
+  status       String    @default("queued") // PrintJobStatus
+  attempts     Int       @default(0)
+  lastError    String?   @map("last_error")
+  createdBy    String    @map("created_by")
+  printedAt    DateTime? @map("printed_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([status])
+  @@map("print_jobs")
+}

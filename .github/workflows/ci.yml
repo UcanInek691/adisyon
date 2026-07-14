@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+# Ayni PR'a arka arkaya push gelirse eski calismayi iptal et.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: '0' # CI'da git hook kurulumu gereksiz
+      DATABASE_URL: 'file:./dev.db' # prisma generate/validate icin (gercek DB kullanilmaz)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate + validate (cok-dosyali sema)
+        run: |
+          pnpm prisma:generate
+          pnpm prisma:validate
+
+      - name: Build shared (@ado/shared dist -> backend bagimliligi)
+        run: pnpm --filter @ado/shared build
+
+      - name: Format check (prettier)
+        run: pnpm format:check
+
+      - name: Lint (eslint)
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Testler eklendikce acilacak (CONVENTIONS.md §7 - kritik modullerde zorunlu):
+      # - name: Test
+      #   run: pnpm -r --if-present run test

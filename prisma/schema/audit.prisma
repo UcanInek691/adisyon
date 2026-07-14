@@ -1,0 +1,34 @@
+// ==============================================================================
+// AUDIT.prisma — Sahip: CEKIRDEK (Denetim - tamam)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+/// APPEND-ONLY + HASH ZINCIRI. version/updated_at/deleted_at TASIMAZ (degismezlik).
+model AuditLog {
+  id         String  @id
+  branchId   String  @map("branch_id")
+  userId     String? @map("user_id")
+  action     String // AuditAction
+  entityType String  @map("entity_type")
+  entityId   String  @map("entity_id")
+  oldValue   String? @map("old_value") // JSON (TEXT)
+  newValue   String? @map("new_value") // JSON (TEXT)
+  reason     String?
+  prevHash   String  @map("prev_hash")
+  hash       String // H(prev_hash + kayit alanlari)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  deviceId  String?  @map("device_id")
+  syncState String   @default("pending") @map("sync_state")
+
+  /// Kaydin kaynagi: online mi yoksa offline replay mi. Bkz. OFFLINE_DESIGN.md §12
+  origin          String    @default("online") // AuditOrigin: online | offline
+  clientOpId      String?   @map("client_op_id") // offline ise iliskili mutasyon ULID
+  clientCreatedAt DateTime? @map("client_created_at") // offline ise istemci uretim zamani
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@map("audit_logs")
+}

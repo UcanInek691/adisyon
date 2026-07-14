@@ -1,0 +1,66 @@
+// ==============================================================================
+// FINANCE.prisma — Sahip: CAGRI (Gelir-Gider)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+model ExpenseCategory {
+  id       String    @id
+  branchId String    @map("branch_id")
+  name     String
+  isActive Boolean   @default(true) @map("is_active")
+  expenses Expense[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("expense_categories")
+}
+
+model Expense {
+  id          String          @id
+  branchId    String          @map("branch_id")
+  categoryId  String          @map("category_id")
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
+  amount      Int // kurus
+  description String?
+  spentAt     DateTime        @map("spent_at")
+  affectsCash Boolean         @default(true) @map("affects_cash")
+  createdBy   String          @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId, categoryId])
+  @@map("expenses")
+}
+
+model Income {
+  id          String   @id
+  branchId    String   @map("branch_id")
+  category    String?
+  amount      Int // kurus
+  description String?
+  receivedAt  DateTime @map("received_at")
+  affectsCash Boolean  @default(true) @map("affects_cash")
+  createdBy   String   @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("incomes")
+}

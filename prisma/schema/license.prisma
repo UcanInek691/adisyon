@@ -1,0 +1,50 @@
+// ==============================================================================
+// LICENSE.prisma — Sahip: CEKIRDEK (Lisans/Guncelleme - degismez)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+model LicenseInfo {
+  id             String    @id
+  licenseKey     String    @map("license_key")
+  customerName   String    @map("customer_name")
+  plan           String?
+  features       String? // JSON (TEXT) feature-flags
+  status         String    @default("active") // LicenseStatus
+  validUntil     DateTime? @map("valid_until")
+  activatedAt    DateTime? @map("activated_at")
+  lastVerifiedAt DateTime? @map("last_verified_at")
+  graceUntil     DateTime? @map("grace_until")
+  signatureValid Boolean   @default(false) @map("signature_valid")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@map("license_info")
+}
+
+model UpdateHistory {
+  id           String    @id
+  fromVersion  String    @map("from_version")
+  toVersion    String    @map("to_version")
+  channel      String // stable | beta
+  status       String // UpdateStatus
+  appliedAt    DateTime? @map("applied_at")
+  backupId     String?   @map("backup_id")
+  rolledBackAt DateTime? @map("rolled_back_at")
+  initiatedBy  String    @map("initiated_by")
+  error        String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@map("update_history")
+}

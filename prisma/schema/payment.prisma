@@ -1,0 +1,62 @@
+// ==============================================================================
+// PAYMENT.prisma — Sahip: MAYA (Odeme)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// ODEME (APPEND-ONLY: UPDATE/DELETE YOK)
+// =============================================================================
+
+model Payment {
+  id                String    @id
+  orderId           String    @map("order_id")
+  order             Order     @relation(fields: [orderId], references: [id])
+  method            String // PaymentMethod
+  direction         String    @default("charge") // charge | refund
+  amount            Int // kurus
+  received          Int       @default(0) // nakit verilen
+  change            Int       @default(0) // para ustu
+  reference         String? // kart/havale ref
+  takenBy           String    @map("taken_by")
+  paidAt            DateTime  @map("paid_at")
+  reversesPaymentId String?   @map("reverses_payment_id")
+  reverses          Payment?  @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
+  reversedBy        Payment[] @relation("PaymentReversal")
+  idempotencyKey    String    @unique @map("idempotency_key")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+model Receipt {
+  id              String    @id
+  orderId         String    @map("order_id")
+  order           Order     @relation(fields: [orderId], references: [id])
+  receiptNo       String    @map("receipt_no")
+  type            String // customer | kitchen | bar
+  printedAt       DateTime  @map("printed_at")
+  printerId       String?   @map("printer_id")
+  printer         Printer?  @relation(fields: [printerId], references: [id])
+  contentSnapshot String    @map("content_snapshot") // yapisal JSON (TEXT)
+  reprintOfId     String?   @map("reprint_of")
+  reprintOf       Receipt?  @relation("ReceiptReprint", fields: [reprintOfId], references: [id])
+  reprints        Receipt[] @relation("ReceiptReprint")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([orderId])
+  @@map("receipts")
+}

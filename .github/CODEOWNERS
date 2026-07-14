@@ -1,0 +1,72 @@
+# CODEOWNERS — kod sahipligi ve zorunlu inceleme
+# Bir PR bir dosyayi degistirdiginde, o dosyanin sahibi otomatik inceleyici olur.
+# Branch protection ile birlikte: karsi tarafin onayi olmadan alanina merge edilmez.
+# Maya = @UcanInek691 (satis hatti)   ·   Cagri = @mhmmtds0 (platform/destek)
+# NOT: Her iki kullanici da repoda "collaborator" olmali, yoksa kural gecersiz sayilir.
+
+# Varsayilan: atanmamis her sey iki kisinin de onayini ister
+*                                   @UcanInek691 @mhmmtds0
+
+# ============================================================================
+# Prisma semasi (domain basina dosya) — cok-dosyali sema
+# ============================================================================
+# Cekirdek (ortak zemin) — iki onay
+/prisma/schema/base.prisma          @UcanInek691 @mhmmtds0
+/prisma/schema/identity.prisma      @UcanInek691 @mhmmtds0
+/prisma/schema/catalog.prisma       @UcanInek691 @mhmmtds0
+/prisma/schema/settings.prisma      @UcanInek691 @mhmmtds0
+/prisma/schema/audit.prisma         @UcanInek691 @mhmmtds0
+/prisma/schema/license.prisma       @UcanInek691 @mhmmtds0
+/prisma/schema/platform.prisma      @UcanInek691 @mhmmtds0
+# Maya
+/prisma/schema/tables.prisma        @UcanInek691
+/prisma/schema/orders.prisma        @UcanInek691
+/prisma/schema/payment.prisma       @UcanInek691
+/prisma/schema/offline.prisma       @UcanInek691
+/prisma/schema/sync.prisma          @UcanInek691
+# Cagri
+/prisma/schema/cash.prisma          @mhmmtds0
+/prisma/schema/finance.prisma       @mhmmtds0
+/prisma/schema/customer.prisma      @mhmmtds0
+/prisma/schema/inventory.prisma     @mhmmtds0
+/prisma/schema/printing.prisma      @mhmmtds0
+/prisma/schema/backup.prisma        @mhmmtds0
+/prisma/schema/reporting.prisma     @mhmmtds0
+
+# ============================================================================
+# Backend modulleri
+# ============================================================================
+# Cekirdek (ortak) — degistirmek iki onay ister
+/apps/backend/src/auth/             @UcanInek691 @mhmmtds0
+/apps/backend/src/catalog/          @UcanInek691 @mhmmtds0
+/apps/backend/src/common/           @UcanInek691 @mhmmtds0
+/apps/backend/src/config/           @UcanInek691 @mhmmtds0
+/apps/backend/src/prisma/           @UcanInek691 @mhmmtds0
+/apps/backend/src/app.module.ts     @UcanInek691 @mhmmtds0
+
+# Maya — satis hatti + istemci-offline
+/apps/backend/src/tables/           @UcanInek691
+/apps/backend/src/orders/           @UcanInek691
+/apps/backend/src/payment/          @UcanInek691
+/apps/backend/src/offline/          @UcanInek691
+/apps/backend/src/sync/             @UcanInek691
+
+# Cagri — platform/destek (kalan Tier A altyapi dahil)
+/apps/backend/src/worker/           @mhmmtds0
+/apps/backend/src/scheduler/        @mhmmtds0
+/apps/backend/src/health/           @mhmmtds0
+/apps/backend/src/feature-flags/    @mhmmtds0
+/apps/backend/src/printing/         @mhmmtds0
+/apps/backend/src/reporting/        @mhmmtds0
+/apps/backend/src/cash/             @mhmmtds0
+/apps/backend/src/finance/          @mhmmtds0
+/apps/backend/src/customer/         @mhmmtds0
+/apps/backend/src/inventory/        @mhmmtds0
+/apps/backend/src/backup/           @mhmmtds0
+
+# ============================================================================
+# Ortak sozlesme + altyapi — iki onay (yuksek etki)
+# ============================================================================
+/packages/shared/                   @UcanInek691 @mhmmtds0
+/.github/                           @UcanInek691 @mhmmtds0
+/prisma/migrations/                 @UcanInek691 @mhmmtds0

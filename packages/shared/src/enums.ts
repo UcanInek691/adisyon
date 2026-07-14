@@ -171,7 +171,8 @@ export const OfflineMutationResult = {
   Conflict: 'conflict',
   Rejected: 'rejected',
 } as const;
-export type OfflineMutationResult = (typeof OfflineMutationResult)[keyof typeof OfflineMutationResult];
+export type OfflineMutationResult =
+  (typeof OfflineMutationResult)[keyof typeof OfflineMutationResult];
 
 /** Offline cakisma review nedeni. OFFLINE_DESIGN.md §8 */
 export const OfflineReviewReason = {

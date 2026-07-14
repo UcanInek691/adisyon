@@ -1,0 +1,55 @@
+// ==============================================================================
+// TABLES.prisma — Sahip: MAYA (Masa/Salon)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// MASA & SALON
+// =============================================================================
+
+model Hall {
+  id        String  @id
+  branchId  String  @map("branch_id")
+  name      String
+  sortOrder Int     @default(0) @map("sort_order")
+  isActive  Boolean @default(true) @map("is_active")
+  tables    Table[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("halls")
+}
+
+model Table {
+  id           String  @id
+  branchId     String  @map("branch_id")
+  hallId       String  @map("hall_id")
+  hall         Hall    @relation(fields: [hallId], references: [id])
+  name         String
+  status       String  @default("empty") // TableStatus
+  seats        Int     @default(4)
+  posX         Int?    @map("pos_x")
+  posY         Int?    @map("pos_y")
+  mergedIntoId String? @map("merged_into_id")
+  mergedInto   Table?  @relation("TableMerge", fields: [mergedIntoId], references: [id])
+  mergedFrom   Table[] @relation("TableMerge")
+  isActive     Boolean @default(true) @map("is_active")
+  orders       Order[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId, hallId])
+  @@map("tables")
+}

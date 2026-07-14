@@ -170,7 +170,9 @@ export class AuthService {
   }
 
   // --- Yardimcilar -----------------------------------------------------------
-  private permsOf(user: { role: { rolePermissions: Array<{ permission: { key: string } }> } }): string[] {
+  private permsOf(user: {
+    role: { rolePermissions: Array<{ permission: { key: string } }> };
+  }): string[] {
     return user.role.rolePermissions.map((rp) => rp.permission.key);
   }
 

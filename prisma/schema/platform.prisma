@@ -1,0 +1,29 @@
+// ==============================================================================
+// PLATFORM.prisma — Sahip: CEKIRDEK (Plugin altyapisi)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+model Plugin {
+  id             String   @id
+  pluginId       String   @map("plugin_id") // manifest id
+  name           String
+  pluginVersion  String   @map("plugin_version")
+  type           String // report | printer
+  enabled        Boolean  @default(true)
+  manifest       String // JSON (TEXT)
+  compatibleCore String   @map("compatible_core")
+  installedAt    DateTime @map("installed_at")
+  installedBy    String   @map("installed_by")
+  loadError      String?  @map("load_error")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@unique([pluginId])
+  @@map("plugins")
+}

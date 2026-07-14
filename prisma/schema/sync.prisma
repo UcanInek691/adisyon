@@ -1,0 +1,58 @@
+// ==============================================================================
+// SYNC.prisma — Sahip: MAYA (Faz 2 sync siniri)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+/// Outbox: Faz 2 buluta gonderim kuyrugu.
+model SyncQueue {
+  id             String    @id
+  entityType     String    @map("entity_type")
+  entityId       String    @map("entity_id")
+  operation      String // create | update | delete
+  payload        String // JSON (TEXT)
+  idempotencyKey String    @unique @map("idempotency_key")
+  status         String    @default("pending") // pending|syncing|synced|failed
+  attempts       Int       @default(0)
+  lastError      String?   @map("last_error")
+  sentAt         DateTime? @map("sent_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  deviceId  String?  @map("device_id")
+
+  @@index([status, createdAt])
+  @@map("sync_queue")
+}
+
+model SyncStateRecord {
+  id           String    @id
+  entityType   String    @map("entity_type")
+  lastPulledAt DateTime? @map("last_pulled_at")
+  lastPushedAt DateTime? @map("last_pushed_at")
+  cursor       String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sync_state")
+}
+
+model Conflict {
+  id            String    @id
+  entityType    String    @map("entity_type")
+  entityId      String    @map("entity_id")
+  localPayload  String    @map("local_payload") // JSON (TEXT)
+  remotePayload String    @map("remote_payload")
+  resolution    String? // local | remote | manual
+  resolvedBy    String?   @map("resolved_by")
+  resolvedAt    DateTime? @map("resolved_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@map("conflicts")
+}

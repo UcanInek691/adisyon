@@ -9,12 +9,7 @@ import {
 
 /** Katalog modulu: Kategori / Urun / Birim / Vergi. PrismaModule + AuditModule @Global. */
 @Module({
-  controllers: [
-    CategoriesController,
-    ProductsController,
-    UnitsController,
-    TaxesController,
-  ],
+  controllers: [CategoriesController, ProductsController, UnitsController, TaxesController],
   providers: [CatalogService],
   exports: [CatalogService],
 })

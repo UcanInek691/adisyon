@@ -1,0 +1,145 @@
+// ==============================================================================
+// CATALOG.prisma — Sahip: CEKIRDEK (Katalog - tamam)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// KATALOG
+// =============================================================================
+
+model Category {
+  id        String     @id
+  branchId  String     @map("branch_id")
+  name      String
+  parentId  String?    @map("parent_id")
+  parent    Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children  Category[] @relation("CategoryTree")
+  sortOrder Int        @default(0) @map("sort_order")
+  color     String?
+  isActive  Boolean    @default(true) @map("is_active")
+  products  Product[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("categories")
+}
+
+model Brand {
+  id       String    @id
+  branchId String    @map("branch_id")
+  name     String
+  isActive Boolean   @default(true) @map("is_active")
+  products Product[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("brands")
+}
+
+model Unit {
+  id           String    @id
+  branchId     String    @map("branch_id")
+  name         String
+  abbreviation String?
+  products     Product[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("units")
+}
+
+model Tax {
+  id           String    @id
+  branchId     String    @map("branch_id")
+  name         String
+  ratePermille Int       @map("rate_permille") // %10 -> 100
+  isDefault    Boolean   @default(false) @map("is_default")
+  products     Product[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("taxes")
+}
+
+model Product {
+  id             String          @id
+  branchId       String          @map("branch_id")
+  categoryId     String          @map("category_id")
+  category       Category        @relation(fields: [categoryId], references: [id])
+  brandId        String?         @map("brand_id")
+  brand          Brand?          @relation(fields: [brandId], references: [id])
+  unitId         String          @map("unit_id")
+  unit           Unit            @relation(fields: [unitId], references: [id])
+  taxId          String          @map("tax_id")
+  tax            Tax             @relation(fields: [taxId], references: [id])
+  name           String
+  barcode        String?
+  sku            String?
+  purchasePrice  Int             @default(0) @map("purchase_price") // kurus
+  salePrice      Int             @map("sale_price") // kurus
+  trackStock     Boolean         @default(false) @map("track_stock")
+  minStock       Int?            @map("min_stock") // milis
+  imagePath      String?         @map("image_path")
+  isActive       Boolean         @default(true) @map("is_active")
+  isFavorite     Boolean         @default(false) @map("is_favorite")
+  sortOrder      Int             @default(0) @map("sort_order")
+  orderItems     OrderItem[]
+  purchaseItems  PurchaseItem[]
+  stockMovements StockMovement[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId, categoryId, isActive])
+  @@index([barcode])
+  @@map("products")
+}
+
+model Discount {
+  id                  String  @id
+  branchId            String  @map("branch_id")
+  name                String
+  type                String // percent | amount
+  value               Int // binde (percent) veya kurus (amount)
+  maxPercentForWaiter Int?    @map("max_percent_for_waiter") // binde
+  isActive            Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@map("discounts")
+}

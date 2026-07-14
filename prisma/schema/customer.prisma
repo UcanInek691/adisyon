@@ -1,0 +1,74 @@
+// ==============================================================================
+// CUSTOMER.prisma — Sahip: CAGRI (Musteri/Veresiye)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// MUSTERI & VERESIYE (APPEND-ONLY hareket)
+// =============================================================================
+
+model Customer {
+  id          String       @id
+  branchId    String       @map("branch_id")
+  name        String
+  phone       String?
+  address     String?
+  taxNo       String?      @map("tax_no")
+  nationalId  String?      @map("national_id")
+  note        String?
+  isActive    Boolean      @default(true) @map("is_active")
+  debtAccount DebtAccount?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId])
+  @@index([phone])
+  @@map("customers")
+}
+
+model DebtAccount {
+  id           String            @id
+  customerId   String            @unique @map("customer_id")
+  customer     Customer          @relation(fields: [customerId], references: [id])
+  balance      Int               @default(0) // kurus (cache; kaynak = hareketler)
+  currency     String            @default("TRY")
+  transactions DebtTransaction[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@map("debt_accounts")
+}
+
+model DebtTransaction {
+  id               String      @id
+  debtAccountId    String      @map("debt_account_id")
+  debtAccount      DebtAccount @relation(fields: [debtAccountId], references: [id])
+  type             String // debt_add | payment
+  amount           Int // kurus (+/-)
+  relatedOrderId   String?     @map("related_order_id")
+  relatedPaymentId String?     @map("related_payment_id")
+  createdBy        String      @map("created_by")
+  note             String?
+  occurredAt       DateTime    @map("occurred_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([debtAccountId])
+  @@map("debt_transactions")
+}

@@ -1,0 +1,24 @@
+// ==============================================================================
+// REPORTING.prisma — Sahip: CAGRI (Rapor)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+model ReportDefinition {
+  id                  String  @id
+  reportId            String  @map("report_id") // eklenti id
+  name                String
+  reportVersion       String  @map("report_version")
+  requiredPermissions String  @map("required_permissions") // JSON (TEXT)
+  isEnabled           Boolean @default(true) @map("is_enabled")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@unique([reportId])
+  @@map("report_definitions")
+}

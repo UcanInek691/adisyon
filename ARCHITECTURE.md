@@ -249,6 +249,7 @@ Kapsam dışı (Faz 1): ÖKC/GİB/ödeme-gateway → o işlem-başı maliyetler 
 |---------|--------|-------|
 | **ARCHITECTURE.md** (bu dosya) | Bütünsel harita | v1.0 |
 | `ROADMAP.md` | Platform altyapı katmanları: ne zaman eklenir (Tier A/B/C + reddedilenler) | v1.0 |
+| `CONTRIBUTING.md` | İki kişilik ekip çalışma sözleşmesi (rol/sahiplik, dal modeli, migration protokolü) | v1.0 |
 | `CONVENTIONS.md` | Kararlar, kod/iş kuralları (yetkili karar kaynağı) | ✅ v1.0 |
 | `SYSTEM_ANALYSIS.md` | Ürün tanımı, faz stratejisi, dağıtım, kapsam | ✅ v1.0 |
 | `PROJECT_STRUCTURE.md` | Hedef mimari (Clean Arch, klasör düzeni) | ✅ v1.0 |

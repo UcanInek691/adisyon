@@ -90,7 +90,9 @@ async function main(): Promise<void> {
 
     // --- Ornek Waiter (PIN) ---
     if (env.SEED_WAITER_PIN) {
-      const exists = await prisma.user.findUnique({ where: { username: env.SEED_WAITER_USERNAME } });
+      const exists = await prisma.user.findUnique({
+        where: { username: env.SEED_WAITER_USERNAME },
+      });
       if (!exists) {
         await prisma.user.create({
           data: {

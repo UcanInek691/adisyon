@@ -1,0 +1,59 @@
+// ==============================================================================
+// CASH.prisma — Sahip: CAGRI (Kasa)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// KASA & FINANS (APPEND-ONLY akis)
+// =============================================================================
+
+model CashSession {
+  id             String            @id
+  branchId       String            @map("branch_id")
+  sessionDevice  String            @map("session_device") // kasanin cihazi
+  openedBy       String            @map("opened_by")
+  openedAt       DateTime          @map("opened_at")
+  openingFloat   Int               @map("opening_float") // kurus
+  closedBy       String?           @map("closed_by")
+  closedAt       DateTime?         @map("closed_at")
+  countedAmount  Int?              @map("counted_amount")
+  expectedAmount Int?              @map("expected_amount")
+  difference     Int?              @map("difference") // kasa farki
+  status         String            @default("open") // open | closed
+  businessDay    String            @map("business_day") // ayarlanabilir gun sonu (YYYY-MM-DD)
+  transactions   CashTransaction[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([branchId, businessDay, status])
+  @@map("cash_sessions")
+}
+
+model CashTransaction {
+  id               String      @id
+  cashSessionId    String      @map("cash_session_id")
+  cashSession      CashSession @relation(fields: [cashSessionId], references: [id])
+  type             String // CashTxnType
+  amount           Int // kurus (+/-)
+  method           String // PaymentMethod
+  relatedPaymentId String?     @map("related_payment_id")
+  relatedExpenseId String?     @map("related_expense_id")
+  createdBy        String      @map("created_by")
+  note             String?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([cashSessionId])
+  @@map("cash_transactions")
+}

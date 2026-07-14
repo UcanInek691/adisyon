@@ -1,8 +1,4 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { newId, createDomainEvent, DomainEventName } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -235,13 +231,7 @@ export class CatalogService {
 
   async updateProduct(user: AuthUser, id: string, dto: UpdateProductDto) {
     const before = await this.productOrThrow(user.branchId, id);
-    await this.assertProductRefs(
-      user.branchId,
-      dto.categoryId,
-      dto.unitId,
-      dto.taxId,
-      dto.brandId,
-    );
+    await this.assertProductRefs(user.branchId, dto.categoryId, dto.unitId, dto.taxId, dto.brandId);
 
     const after = await this.prisma.product.update({
       where: { id },

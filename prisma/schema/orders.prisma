@@ -1,0 +1,129 @@
+// ==============================================================================
+// ORDERS.prisma — Sahip: MAYA (Siparis/Adisyon)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+// =============================================================================
+// SATIS: SIPARIS & ADISYON
+// =============================================================================
+
+model Order {
+  id            String          @id
+  branchId      String          @map("branch_id")
+  tableId       String?         @map("table_id")
+  table         Table?          @relation(fields: [tableId], references: [id])
+  orderNo       String          @map("order_no") // YYYYMMDD-#### (insan-okur)
+  status        String          @default("open") // OrderStatus
+  openedBy      String          @map("opened_by") // user id (plain)
+  openedAt      DateTime        @map("opened_at")
+  closedBy      String?         @map("closed_by")
+  closedAt      DateTime?       @map("closed_at")
+  guestCount    Int             @default(1) @map("guest_count")
+  note          String?
+  subtotal      Int             @default(0) // kurus
+  discountTotal Int             @default(0) @map("discount_total")
+  serviceCharge Int             @default(0) @map("service_charge")
+  coverCharge   Int             @default(0) @map("cover_charge")
+  taxTotal      Int             @default(0) @map("tax_total")
+  grandTotal    Int             @default(0) @map("grand_total")
+  isPaid        Boolean         @default(false) @map("is_paid")
+  parentOrderId String?         @map("parent_order_id")
+  parentOrder   Order?          @relation("OrderSplit", fields: [parentOrderId], references: [id])
+  childOrders   Order[]         @relation("OrderSplit")
+  items         OrderItem[]
+  payments      Payment[]
+  discounts     OrderDiscount[]
+  receipts      Receipt[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  /// Offline istemci mutasyon kimligi (idempotency + izlenebilirlik). Bkz. OFFLINE_DESIGN.md §6
+  clientOpId String? @unique @map("client_op_id") // ULID (OPEN_TABLE mutasyonu)
+
+  @@unique([branchId, orderNo])
+  @@index([branchId, status])
+  @@index([tableId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id                  String          @id
+  orderId             String          @map("order_id")
+  order               Order           @relation(fields: [orderId], references: [id])
+  productId           String          @map("product_id")
+  product             Product         @relation(fields: [productId], references: [id])
+  productNameSnapshot String          @map("product_name_snapshot")
+  unitPrice           Int             @map("unit_price") // kurus (snapshot)
+  quantity            Int // milis (x1000)
+  taxRatePermille     Int             @map("tax_rate_permille") // snapshot
+  lineDiscount        Int             @default(0) @map("line_discount")
+  lineTotal           Int             @map("line_total")
+  status              String          @default("pending") // OrderItemStatus
+  addedBy             String          @map("added_by")
+  sentToKitchenAt     DateTime?       @map("sent_to_kitchen_at")
+  voidedBy            String?         @map("voided_by")
+  voidReason          String?         @map("void_reason")
+  notes               OrderItemNote[]
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  /// Offline istemci mutasyon kimligi (idempotency + izlenebilirlik). Bkz. OFFLINE_DESIGN.md §6
+  clientOpId String? @unique @map("client_op_id") // ULID (ADD_LINE mutasyonu)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+model OrderItemNote {
+  id          String    @id
+  orderItemId String    @map("order_item_id")
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id])
+  note        String
+  type        String // waiter | kitchen
+  createdBy   String    @map("created_by")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([orderItemId])
+  @@map("order_item_notes")
+}
+
+model OrderDiscount {
+  id         String  @id
+  orderId    String  @map("order_id")
+  order      Order   @relation(fields: [orderId], references: [id])
+  discountId String? @map("discount_id")
+  type       String // percent | amount
+  value      Int
+  amount     Int // hesaplanan tutar (kurus)
+  appliedBy  String  @map("applied_by")
+  reason     String?
+  approvedBy String? @map("approved_by") // Waiter >%10 ise Owner
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  version   Int       @default(1)
+  deviceId  String?   @map("device_id")
+  syncState String    @default("pending") @map("sync_state")
+
+  @@index([orderId])
+  @@map("order_discounts")
+}
