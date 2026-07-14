@@ -248,12 +248,16 @@ Kapsam dışı (Faz 1): ÖKC/GİB/ödeme-gateway → o işlem-başı maliyetler 
 | Doküman | Kapsam | Durum |
 |---------|--------|-------|
 | **ARCHITECTURE.md** (bu dosya) | Bütünsel harita | v1.0 |
+| `ROADMAP.md` | Platform altyapı katmanları: ne zaman eklenir (Tier A/B/C + reddedilenler) | v1.0 |
 | `CONVENTIONS.md` | Kararlar, kod/iş kuralları (yetkili karar kaynağı) | ✅ v1.0 |
 | `SYSTEM_ANALYSIS.md` | Ürün tanımı, faz stratejisi, dağıtım, kapsam | ✅ v1.0 |
 | `PROJECT_STRUCTURE.md` | Hedef mimari (Clean Arch, klasör düzeni) | ✅ v1.0 |
 | `DATABASE_DESIGN.md` | 40+ model, ilişkiler, indeksler | ✅ v1.0 |
 | `API_DESIGN.md` | REST/WS uçları, zarf, hata kodları, auth, sync uçları | ✅ v1.1 |
 | `OFFLINE_DESIGN.md` | İstemci-offline (B sınırı): IndexedDB outbox, merge, review | ✅ v1.0 |
+| `EVENT_BUS.md` · `DOMAIN_EVENTS.md` | Event Bus + domain event sözleşmesi (Tier A) | 🚧 inşa ediliyor |
+| `BACKGROUND_WORKERS.md` | Kalıcı iş kuyruğu + worker + scheduler (Tier A) | 🚧 inşa ediliyor |
+| `HEALTH_SYSTEM.md` · `FEATURE_FLAGS.md` | Health check + feature flag (Tier A) | 🚧 inşa ediliyor |
 | `AUDIT_LOG.md` | Hash zinciri + imzalı arşiv detayı | ⏳ yazılacak |
 | `SYNC_AND_OFFLINE.md` | Faz 2 cloud senkron (A sınırı) | ⏳ yazılacak |
 | `LICENSING.md`, `UPDATE_SYSTEM.md`, `SECURITY.md`, `PLUGIN_SYSTEM.md`, `MODULES.md` | İlgili alt sistemler | ⏳ yazılacak |
