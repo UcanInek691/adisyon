@@ -3,9 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { newId } from '@ado/shared';
+import { newId, createDomainEvent, DomainEventName } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
+import { EventBusService } from '../common/events/event-bus.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import type {
   CreateCategoryDto,
@@ -30,11 +31,36 @@ export class CatalogService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly events: EventBusService,
   ) {}
 
   // Mutasyonlarda yazilan ortak provenance alanlari.
   private provenance(user: AuthUser): { deviceId?: string } {
     return user.deviceId ? { deviceId: user.deviceId } : {};
+  }
+
+  // Urun domain event'i yayinlar (audit yaninda; yan etkiler icin -> EVENT_BUS.md).
+  private async publishProductEvent(
+    user: AuthUser,
+    name: (typeof DomainEventName)[keyof typeof DomainEventName],
+    product: { id: string; name: string; categoryId: string; salePrice: number },
+  ): Promise<void> {
+    await this.events.publish(
+      createDomainEvent(
+        name,
+        {
+          productId: product.id,
+          name: product.name,
+          categoryId: product.categoryId,
+          salePrice: product.salePrice,
+        },
+        {
+          branchId: user.branchId,
+          actorId: user.userId,
+          ...(user.deviceId ? { deviceId: user.deviceId } : {}),
+        },
+      ),
+    );
   }
 
   // ===========================================================================
@@ -203,6 +229,7 @@ export class CatalogService {
       newValue: created,
       ...this.provenance(user),
     });
+    await this.publishProductEvent(user, DomainEventName.ProductCreated, created);
     return created;
   }
 
@@ -247,6 +274,7 @@ export class CatalogService {
       newValue: after,
       ...this.provenance(user),
     });
+    await this.publishProductEvent(user, DomainEventName.ProductUpdated, after);
     return after;
   }
 
@@ -262,6 +290,7 @@ export class CatalogService {
       oldValue: before,
       ...this.provenance(user),
     });
+    await this.publishProductEvent(user, DomainEventName.ProductDeleted, before);
     return after;
   }
 

@@ -1,0 +1,68 @@
+# DOMAIN_EVENTS.md — Domain Event Katalogu
+
+> Sistemdeki her onemli is olayi bir **domain event** uretir. Bu dosya kanonik katalogdur:
+> her event icin **amaci / yayinlandigi yer / dinleyen moduller**. Mekanizma: `EVENT_BUS.md`.
+
+**Durum:** Sürüm 1.0 · **Oluşturuldu:** 2026-07-15 · **Tür:** Yaşayan doküman
+İlgili: `EVENT_BUS.md`, `@ado/shared/events.ts` (kod sozlesmesi), `ROADMAP.md` (Tier A).
+
+---
+
+## İsimlendirme ve Zarf
+
+- Ad kurali: **`entity.action`**, gecmis zaman ( or. `order.created`, `product.updated`).
+- Ortak zarf (eventId/occurredAt/branchId/actorId/deviceId/correlationId/payload): `EVENT_BUS.md` §3.
+- **Kural:** yeni event kodda `DomainEventName`e eklenince buraya da eklenir. Kod ve bu dosya ayrilmaz.
+
+---
+
+## Uygulanan Event'ler
+
+### `product.created`
+- **Amaci:** Yeni urun katalogda olusturuldu.
+- **Yayinlandigi yer:** `CatalogService.createProduct` (post-commit).
+- **Payload:** `{ productId, name, categoryId, salePrice }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber` (tumu). İleride: Cache invalidation, Dashboard, Sync.
+
+### `product.updated`
+- **Amaci:** Urun bilgisi/fiyati guncellendi.
+- **Yayinlandigi yer:** `CatalogService.updateProduct` (post-commit).
+- **Payload:** `{ productId, name, categoryId, salePrice }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Cache invalidation, Dashboard, Sync.
+- **Not:** Ayri bir `price.changed` event'i, fiyat degisimini ozel izlemek gerekince eklenecek
+  (su an fiyat guncellemesi bu event'e dahil).
+
+### `product.deleted`
+- **Amaci:** Urun soft-delete edildi.
+- **Yayinlandigi yer:** `CatalogService.deleteProduct` (post-commit; payload silinmeden onceki durum).
+- **Payload:** `{ productId, name, categoryId, salePrice }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Cache invalidation, Dashboard, Sync.
+
+---
+
+## Planlanan Event'ler (modul gelince eklenecek)
+
+Asagidakiler kod sozlesmesine (`DomainEventName`) ve bu katalogsa ilgili modul inşa edilirken
+eklenecektir. Dinleyiciler sutunu hedeftir.
+
+| Event | Yayinci (modul) | Muhtemel dinleyiciler |
+|-------|-----------------|-----------------------|
+| `order.created` | Sipariş | Printer(mutfak), Audit, Dashboard, Sync |
+| `order.item.added` / `order.item.removed` | Sipariş | Dashboard, TimeMachine |
+| `order.cancelled` | Sipariş | Audit, Dashboard, Sync |
+| `order.closed` | Sipariş | Dashboard, Sync |
+| `order.paid` | Ödeme | Printer(fis), Audit, CashRegister, Dashboard, Sync, Notification |
+| `receipt.printed` | Yazdırma | Audit, TimeMachine |
+| `price.changed` | Katalog | Audit, Cache invalidation, Dashboard |
+| `debt.created` / `debt.paid` | Veresiye | Audit, Dashboard, Sync |
+| `expense.created` / `income.created` | Gelir-Gider | Audit, Dashboard, Sync |
+| `cash.opened` / `cash.closed` | Kasa | Audit, Dashboard, Sync |
+| `customer.created` / `customer.updated` / `customer.deleted` | Müşteri | Cache, Dashboard, Sync |
+| `table.merged` / `table.moved` / `table.reserved` | Masa | Dashboard, TimeMachine, Sync |
+| `report.generated` | Rapor (plugin) | Audit |
+| `user.logged_in` / `user.logged_out` | Kimlik | Audit, Monitoring |
+| `printer.failed` / `printer.recovered` | Yazdırma | Monitoring, Notification |
+| `sync.completed` / `sync.failed` | Sync (Faz 2) | Monitoring, Notification |
+| `update.installed` | Güncelleme | Audit, Monitoring |
+
+> Bu tablo **hedef**tir; her satir ilgili modul kodlanirken uygulanan bolume tasinir + payload'i tanimlanir.

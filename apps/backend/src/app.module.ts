@@ -8,6 +8,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { AuditModule } from './common/audit/audit.module';
+import { EventBusModule } from './common/events/event-bus.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from './auth/guards/permissions.guard';
 import { AllExceptionsFilter } from './common/http/all-exceptions.filter';
@@ -37,6 +38,7 @@ const isProd = process.env.NODE_ENV === 'production';
     }),
     ConfigModule,
     PrismaModule,
+    EventBusModule,
     AuditModule,
     AuthModule,
     CatalogModule,
