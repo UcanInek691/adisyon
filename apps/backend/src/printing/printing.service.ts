@@ -1,10 +1,20 @@
-import { ConflictException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { newId, PrintJobStatus, DocumentType } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { BackgroundWorkerService } from '../common/worker/worker.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
-import type { CreatePrinterDto, UpdatePrinterDto, CreatePrintRouteDto } from './dto/printing.schemas';
+import type {
+  CreatePrinterDto,
+  UpdatePrinterDto,
+  CreatePrintRouteDto,
+} from './dto/printing.schemas';
 
 export interface PrinterDriver {
   print(payload: any, connection: string, address: string | null): Promise<void>;
@@ -45,9 +55,12 @@ export class PrintingService implements OnModuleInit {
     this.logger.log('Printer drivers initialized.');
 
     // Arka plan iş kuyruğu dinleyicisini kaydet
-    this.worker.registerHandler('print.job', async (payload: { jobId: string }, _branchId: string) => {
-      await this.executePrintJob(payload.jobId);
-    });
+    this.worker.registerHandler(
+      'print.job',
+      async (payload: { jobId: string }, _branchId: string) => {
+        await this.executePrintJob(payload.jobId);
+      },
+    );
   }
 
   // ===========================================================================
@@ -209,7 +222,7 @@ export class PrintingService implements OnModuleInit {
     createdBy: string,
   ): Promise<string> {
     const id = newId();
-    
+
     await this.prisma.printJob.create({
       data: {
         id,
@@ -303,7 +316,9 @@ export class PrintingService implements OnModuleInit {
     }
 
     if (!printerId) {
-      this.logger.warn(`No print route or default printer configured for customer receipts in branch ${event.branchId}`);
+      this.logger.warn(
+        `No print route or default printer configured for customer receipts in branch ${event.branchId}`,
+      );
       return;
     }
 

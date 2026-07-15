@@ -191,7 +191,9 @@ export class InventoryService {
 
     if (!product || !product.trackStock) return;
 
-    this.logger.log(`Received order.item.added. Deducting stock for product: ${productId}, quantity: ${quantity}`);
+    this.logger.log(
+      `Received order.item.added. Deducting stock for product: ${productId}, quantity: ${quantity}`,
+    );
 
     await this.prisma.stockMovement.create({
       data: {
@@ -218,7 +220,9 @@ export class InventoryService {
 
     if (!product || !product.trackStock) return;
 
-    this.logger.log(`Received order.item.voided. Refunding stock for product: ${productId}, quantity: ${quantity}`);
+    this.logger.log(
+      `Received order.item.voided. Refunding stock for product: ${productId}, quantity: ${quantity}`,
+    );
 
     await this.prisma.stockMovement.create({
       data: {

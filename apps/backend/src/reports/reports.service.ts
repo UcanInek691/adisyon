@@ -89,7 +89,10 @@ export class ReportsService {
       },
     });
 
-    const productSales: Record<string, { name: string; quantityMilis: number; totalKurus: number }> = {};
+    const productSales: Record<
+      string,
+      { name: string; quantityMilis: number; totalKurus: number }
+    > = {};
     for (const item of items) {
       const prodId = item.productId;
       if (!productSales[prodId]) {
@@ -116,12 +119,14 @@ export class ReportsService {
       },
     });
 
-    return accounts.map((acc) => ({
-      customerId: acc.customerId,
-      customerName: acc.customer.name,
-      phone: acc.customer.phone,
-      balanceKurus: acc.balance,
-    })).sort((a, b) => b.balanceKurus - a.balanceKurus);
+    return accounts
+      .map((acc) => ({
+        customerId: acc.customerId,
+        customerName: acc.customer.name,
+        phone: acc.customer.phone,
+        balanceKurus: acc.balance,
+      }))
+      .sort((a, b) => b.balanceKurus - a.balanceKurus);
   }
 
   async getInventoryStocks(user: AuthUser) {

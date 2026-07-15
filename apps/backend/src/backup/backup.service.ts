@@ -41,11 +41,11 @@ export class BackupService {
 
       // 2. Read temp file and encrypt it
       const rawData = readFileSync(tempFile);
-      
+
       const key = this.getEncryptionKey();
       const iv = randomBytes(12); // GCM requires 12 bytes IV
       const cipher = createCipheriv(ALGORITHM, key, iv);
-      
+
       const encryptedData = Buffer.concat([cipher.update(rawData), cipher.final()]);
       const authTag = cipher.getAuthTag();
 
@@ -80,7 +80,11 @@ export class BackupService {
       this.logger.error('Failed to create database backup', err);
       // Clean up temp file if it exists
       if (existsSync(tempFile)) {
-        try { unlinkSync(tempFile); } catch {}
+        try {
+          unlinkSync(tempFile);
+        } catch {
+          // ignore
+        }
       }
       throw new Error(`Backup failed: ${err.message}`);
     }

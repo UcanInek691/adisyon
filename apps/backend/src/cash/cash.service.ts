@@ -159,14 +159,18 @@ export class CashService {
   @OnEvent('order.paid', { async: true })
   async handleOrderPaid(event: any) {
     const { amount, method, paymentId } = event.payload;
-    this.logger.log(`Received order.paid event. Logging cash transaction for payment: ${paymentId}`);
+    this.logger.log(
+      `Received order.paid event. Logging cash transaction for payment: ${paymentId}`,
+    );
 
     const session = await this.prisma.cashSession.findFirst({
       where: { branchId: event.branchId, status: 'open', deletedAt: null },
     });
 
     if (!session) {
-      this.logger.warn(`Received order.paid event but no active CashSession found for branch ${event.branchId}`);
+      this.logger.warn(
+        `Received order.paid event but no active CashSession found for branch ${event.branchId}`,
+      );
       return;
     }
 

@@ -216,7 +216,9 @@ export class CustomerService {
     if (method !== 'debt') return;
 
     if (!customerId) {
-      this.logger.error(`Received order.paid event with method 'debt' but no customerId provided for order: ${orderId}`);
+      this.logger.error(
+        `Received order.paid event with method 'debt' but no customerId provided for order: ${orderId}`,
+      );
       return;
     }
 
@@ -229,7 +231,9 @@ export class CustomerService {
       return;
     }
 
-    this.logger.log(`Received order.paid (debt) event. Accruing veresiye debt for customer: ${customerId}, order: ${orderId}`);
+    this.logger.log(
+      `Received order.paid (debt) event. Accruing veresiye debt for customer: ${customerId}, order: ${orderId}`,
+    );
 
     await this.prisma.$transaction(async (tx) => {
       await tx.debtTransaction.create({

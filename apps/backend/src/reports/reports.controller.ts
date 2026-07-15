@@ -15,7 +15,11 @@ export class ReportsController {
     @Query('start') start: string,
     @Query('end') end: string,
   ) {
-    return this.reportsService.getDailySales(user, start || new Date().toISOString(), end || new Date().toISOString());
+    return this.reportsService.getDailySales(
+      user,
+      start || new Date().toISOString(),
+      end || new Date().toISOString(),
+    );
   }
 
   @Get('sales/products')
@@ -25,7 +29,11 @@ export class ReportsController {
     @Query('start') start: string,
     @Query('end') end: string,
   ) {
-    return this.reportsService.getProductSales(user, start || new Date().toISOString(), end || new Date().toISOString());
+    return this.reportsService.getProductSales(
+      user,
+      start || new Date().toISOString(),
+      end || new Date().toISOString(),
+    );
   }
 
   @Get('customers/debt')

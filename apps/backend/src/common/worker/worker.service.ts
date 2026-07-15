@@ -23,7 +23,12 @@ export class BackgroundWorkerService implements OnModuleInit {
     this.logger.log(`Task handler registered: ${taskName}`);
   }
 
-  async enqueue(branchId: string, taskName: string, payload: any, delaySeconds = 0): Promise<string> {
+  async enqueue(
+    branchId: string,
+    taskName: string,
+    payload: any,
+    delaySeconds = 0,
+  ): Promise<string> {
     const id = newId();
     const runAt = new Date(Date.now() + delaySeconds * 1000);
     const serializedPayload = JSON.stringify(payload);
@@ -102,7 +107,7 @@ export class BackgroundWorkerService implements OnModuleInit {
     try {
       const parsedPayload = JSON.parse(job.payload);
       await handler(parsedPayload, job.branchId);
-      
+
       // Basariyla bitti
       await this.prisma.backgroundJob.update({
         where: { id: job.id },
@@ -133,7 +138,9 @@ export class BackgroundWorkerService implements OnModuleInit {
           lockedAt: null,
         },
       });
-      this.logger.warn(`Job ${id} scheduled for retry at ${nextRun.toISOString()} (backoff: ${backoffSeconds}s)`);
+      this.logger.warn(
+        `Job ${id} scheduled for retry at ${nextRun.toISOString()} (backoff: ${backoffSeconds}s)`,
+      );
     } else {
       // Kalici basarisiz
       await this.prisma.backgroundJob.update({

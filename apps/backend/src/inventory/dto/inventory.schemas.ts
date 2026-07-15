@@ -21,7 +21,11 @@ export const createPurchaseSchema = z.object({
   supplierId: z.string().min(1),
   invoiceNo: z.string().nullish(),
   total: z.number().int().nonnegative(), // kurus
-  purchasedAt: z.string().datetime().optional().default(() => new Date().toISOString()),
+  purchasedAt: z
+    .string()
+    .datetime()
+    .optional()
+    .default(() => new Date().toISOString()),
   items: z.array(createPurchaseItemSchema).min(1),
 });
 export type CreatePurchaseDto = z.infer<typeof createPurchaseSchema>;
