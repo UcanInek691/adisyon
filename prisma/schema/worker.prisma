@@ -1,0 +1,26 @@
+// ==============================================================================
+// WORKER.prisma — Sahip: CAGRI (Worker Queue)
+// Bu dosyayi yalnizca sahibi degistirir (.github/CODEOWNERS). Bkz. CONTRIBUTING.md.
+// Cok-dosyali Prisma semasi: tum prisma/schema/*.prisma birlestirilir.
+// ==============================================================================
+
+model BackgroundJob {
+  id          String    @id // ULID
+  branchId    String    @map("branch_id")
+  taskName    String    @map("task_name") // ornegin "print.receipt"
+  payload     String // parametreler JSON (TEXT)
+  status      String    @default("pending") // pending | running | completed | failed
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  lastError   String?   @map("last_error")
+  runAt       DateTime  @default(now()) @map("run_at")
+  lockedAt    DateTime? @map("locked_at")
+  completedAt DateTime? @map("completed_at")
+  failedAt    DateTime? @map("failed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([status, runAt])
+  @@map("background_jobs")
+}
