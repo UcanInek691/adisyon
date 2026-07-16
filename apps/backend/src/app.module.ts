@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { TablesModule } from './tables/tables.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 import { AuditModule } from './common/audit/audit.module';
 import { EventBusModule } from './common/events/event-bus.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
@@ -25,6 +26,9 @@ import { ReportsModule } from './reports/reports.module';
 import { CashModule } from './cash/cash.module';
 import { CustomerModule } from './customer/customer.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { FinanceModule } from './finance/finance.module';
+import { SettingsModule } from './settings/settings.module';
+import { DevicesModule } from './devices/devices.module';
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -56,6 +60,7 @@ const isProd = process.env.NODE_ENV === 'production';
     CatalogModule,
     TablesModule,
     OrdersModule,
+    PaymentsModule,
     BackgroundWorkerModule,
     ScheduleModule,
     HealthModule,
@@ -66,6 +71,9 @@ const isProd = process.env.NODE_ENV === 'production';
     CashModule,
     CustomerModule,
     InventoryModule,
+    FinanceModule,
+    SettingsModule,
+    DevicesModule,
   ],
   providers: [
     // Sira onemli: once kimlik (req.user'i doldurur), sonra izin denetimi.

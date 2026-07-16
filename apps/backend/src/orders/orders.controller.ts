@@ -11,12 +11,20 @@ import {
   voidItemSchema,
   cancelOrderSchema,
   orderQuerySchema,
+  applyDiscountSchema,
+  moveTableSchema,
+  mergeOrderSchema,
+  splitOrderSchema,
   type OpenOrderDto,
   type AddItemDto,
   type UpdateItemDto,
   type VoidItemDto,
   type CancelOrderDto,
   type OrderQueryDto,
+  type ApplyDiscountDto,
+  type MoveTableDto,
+  type MergeOrderDto,
+  type SplitOrderDto,
 } from './dto/orders.schemas';
 
 /**
@@ -101,5 +109,77 @@ export class OrdersController {
     @Body(new ZodValidationPipe(cancelOrderSchema)) dto: CancelOrderDto,
   ) {
     return this.orders.cancelOrder(user, id, dto);
+  }
+
+  @Post(':id/hold')
+  @RequirePermissions(Permission.OrderCreate)
+  hold(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.orders.holdOrder(user, id);
+  }
+
+  @Post(':id/resume')
+  @RequirePermissions(Permission.OrderCreate)
+  resume(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.orders.resumeOrder(user, id);
+  }
+
+  @Post(':id/move-table')
+  @RequirePermissions(Permission.OrderCreate)
+  moveTable(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(moveTableSchema)) dto: MoveTableDto,
+  ) {
+    return this.orders.moveTable(user, id, dto.tableId);
+  }
+
+  // Baska bir acik adisyonu (sourceOrderId) bu adisyona (:id) birlestirir.
+  @Post(':id/merge')
+  @RequirePermissions(Permission.OrderCreate)
+  merge(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(mergeOrderSchema)) dto: MergeOrderDto,
+  ) {
+    return this.orders.mergeOrders(user, id, dto.sourceOrderId);
+  }
+
+  // Bu adisyondan (:id) secili kalemleri yeni bir adisyona bolerek ayirir.
+  @Post(':id/split')
+  @RequirePermissions(Permission.OrderCreate)
+  split(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(splitOrderSchema)) dto: SplitOrderDto,
+  ) {
+    return this.orders.splitOrder(user, id, dto);
+  }
+
+  // Bekleyen kalemleri mutfaga/bara ilet (hazirlik fisi + kalem kilidi).
+  @Post(':id/send-kitchen')
+  @RequirePermissions(Permission.OrderSendKitchen)
+  sendKitchen(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.orders.sendToKitchen(user, id);
+  }
+
+  // Adisyon-seviyesi indirim. Min. yetki: apply_limited; >%10 serviste apply_full istenir.
+  @Post(':id/discounts')
+  @RequirePermissions(Permission.DiscountApplyLimited)
+  applyDiscount(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(applyDiscountSchema)) dto: ApplyDiscountDto,
+  ) {
+    return this.orders.applyDiscount(user, id, dto);
+  }
+
+  @Delete(':id/discounts/:discountId')
+  @RequirePermissions(Permission.DiscountApplyLimited)
+  removeDiscount(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('discountId') discountId: string,
+  ) {
+    return this.orders.removeDiscount(user, id, discountId);
   }
 }

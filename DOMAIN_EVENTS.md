@@ -85,7 +85,25 @@
 - **Payload:** `{ orderId, orderNo, tableId?, status, grandTotal }`.
 - **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: canli masa (WS), Dashboard, Sync.
 
-> Not: `order.paid` / `order.closed` / `receipt.printed` Odeme modulunde; mutfak `order.item.sent` PR2'de.
+### `order.item.sent`
+- **Amaci:** Bekleyen kalemler mutfaga/bara iletildi (hazirlik).
+- **Yayinlandigi yer:** `OrdersService.sendToKitchen` (post-commit).
+- **Payload:** `{ orderId, items: [{ orderItemId, productId, productName, quantity }] }`.
+- **Dinleyen moduller:** `PrintingService` (mutfak fisi + Receipt kaydi).
+
+### `order.paid`
+- **Amaci:** Adisyona bir odeme alindi (append-only). Split/kismi odemede her odemede yayinlanir.
+- **Yayinlandigi yer:** `PaymentsService.recordPayment` (post-commit).
+- **Payload:** `{ orderId, paymentId, amount, method, customerId? }` (`customerId` yalniz veresiye).
+- **Dinleyen moduller:** `CashService` (nakit hareketi), `CustomerService` (veresiye, `method='debt'`), `PrintingService` (fis). İleride: Dashboard, Sync.
+
+### `order.refunded`
+- **Amaci:** Bir odeme iade edildi (ters kayit). Adisyon kapaliysa ve tam odemenin altina duserse yeniden acilir.
+- **Yayinlandigi yer:** `PaymentsService.reversePayment` (post-commit).
+- **Payload:** `{ orderId, paymentId, originalPaymentId, amount, method, customerId? }`.
+- **Dinleyen moduller:** `CashService` (nakit cikisi), `CustomerService` (veresiye borc geri alma).
+
+> Not: `order.closed` / `receipt.printed` henuz yok; mutfak `order.item.sent` PR2'de.
 
 ## Planlanan Event'ler (modul gelince eklenecek)
 
@@ -98,7 +116,6 @@ eklenecektir. Dinleyiciler sutunu hedeftir.
 | `order.item.added` / `order.item.removed` | Sipariş | Dashboard, TimeMachine |
 | `order.cancelled` | Sipariş | Audit, Dashboard, Sync |
 | `order.closed` | Sipariş | Dashboard, Sync |
-| `order.paid` | Ödeme | Printer(fis), Audit, CashRegister, Dashboard, Sync, Notification |
 | `receipt.printed` | Yazdırma | Audit, TimeMachine |
 | `price.changed` | Katalog | Audit, Cache invalidation, Dashboard |
 | `debt.created` / `debt.paid` | Veresiye | Audit, Dashboard, Sync |

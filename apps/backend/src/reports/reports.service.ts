@@ -1,10 +1,78 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { businessDayWindow } from './reports.calc';
 
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // Gun sonu (Z) ozeti: tek is-gunu icin satis + odeme + kasa oturumu + gider/gelir.
+  // Sahibin gunu kapatirken okudugu tek rapor. Veresiye ayri raporda (customers/debt).
+  async getEndOfDay(user: AuthUser, date: string) {
+    const { day, start, end } = businessDayWindow(date);
+
+    const ordersSummary = await this.prisma.order.aggregate({
+      where: {
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _count: { id: true },
+      _sum: { subtotal: true, discountTotal: true, grandTotal: true },
+    });
+
+    const paymentsByMethod = await this.prisma.payment.groupBy({
+      by: ['method'],
+      where: {
+        order: { branchId: user.branchId },
+        paidAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _sum: { amount: true },
+    });
+
+    const sessions = await this.prisma.cashSession.findMany({
+      where: { branchId: user.branchId, businessDay: day, deletedAt: null },
+      orderBy: { openedAt: 'asc' },
+    });
+
+    const expenses = await this.prisma.expense.aggregate({
+      where: { branchId: user.branchId, spentAt: { gte: start, lt: end }, deletedAt: null },
+      _sum: { amount: true },
+    });
+    const incomes = await this.prisma.income.aggregate({
+      where: { branchId: user.branchId, receivedAt: { gte: start, lt: end }, deletedAt: null },
+      _sum: { amount: true },
+    });
+
+    return {
+      businessDay: day,
+      sales: {
+        count: ordersSummary._count.id || 0,
+        grossKurus: ordersSummary._sum.subtotal || 0,
+        discountKurus: ordersSummary._sum.discountTotal || 0,
+        netKurus: ordersSummary._sum.grandTotal || 0,
+      },
+      payments: paymentsByMethod.map((p) => ({ method: p.method, totalKurus: p._sum.amount || 0 })),
+      cash: {
+        sessions: sessions.map((s) => ({
+          id: s.id,
+          status: s.status,
+          openedAt: s.openedAt,
+          closedAt: s.closedAt,
+          openingFloatKurus: s.openingFloat,
+          expectedKurus: s.expectedAmount,
+          countedKurus: s.countedAmount,
+          differenceKurus: s.difference,
+        })),
+        differenceTotalKurus: sessions.reduce((sum, s) => sum + (s.difference ?? 0), 0),
+      },
+      expensesKurus: expenses._sum.amount || 0,
+      incomesKurus: incomes._sum.amount || 0,
+    };
+  }
 
   async getDailySales(user: AuthUser, start: string, end: string) {
     const startDate = new Date(start);
@@ -43,6 +111,7 @@ export class ReportsService {
           deletedAt: null,
         },
         deletedAt: null,
+        status: { not: 'cancelled' }, // void edilmis kalem satisa sayilmaz
       },
       include: {
         product: { include: { category: true } },
@@ -83,6 +152,7 @@ export class ReportsService {
           deletedAt: null,
         },
         deletedAt: null,
+        status: { not: 'cancelled' }, // void edilmis kalem satisa sayilmaz
       },
       include: {
         product: true,

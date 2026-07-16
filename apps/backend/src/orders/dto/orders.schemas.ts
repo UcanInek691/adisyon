@@ -45,6 +45,34 @@ export const cancelOrderSchema = z.object({
 });
 export type CancelOrderDto = z.infer<typeof cancelOrderSchema>;
 
+// --- Masa tasi (baska masaya) ---
+export const moveTableSchema = z.object({
+  tableId: z.string().min(1),
+});
+export type MoveTableDto = z.infer<typeof moveTableSchema>;
+
+// --- Adisyon birlestir (kaynak -> hedef) ---
+export const mergeOrderSchema = z.object({
+  sourceOrderId: z.string().min(1),
+});
+export type MergeOrderDto = z.infer<typeof mergeOrderSchema>;
+
+// --- Adisyon bol (secili kalemleri yeni adisyona; istege bagli bos masaya) ---
+export const splitOrderSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(1),
+  targetTableId: z.string().min(1).nullish(),
+});
+export type SplitOrderDto = z.infer<typeof splitOrderSchema>;
+
+// --- Adisyon-seviyesi indirim ---
+// percent: value = yuzde (1-100). amount: value = kurus.
+export const applyDiscountSchema = z.object({
+  type: z.enum(['percent', 'amount']),
+  value: z.number().int().positive(),
+  reason: z.string().nullish(),
+});
+export type ApplyDiscountDto = z.infer<typeof applyDiscountSchema>;
+
 // --- Sorgu ---
 export const orderQuerySchema = z.object({
   tableId: z.string().optional(),

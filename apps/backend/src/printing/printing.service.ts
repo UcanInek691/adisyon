@@ -288,18 +288,27 @@ export class PrintingService implements OnModuleInit {
   @OnEvent('order.paid', { async: true })
   async handleOrderPaid(event: any) {
     const { orderId } = event.payload;
-    this.logger.log(`Received order.paid event. Enqueuing receipt print job for order: ${orderId}`);
+    this.logger.log(`Received order.paid event for order: ${orderId}`);
 
-    // Sipariş verilerini DB'den çek
+    // Sipariş verilerini DB'den çek (iptal/silinmiş kalemler fişe girmez)
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: { include: { product: true } } },
+      include: {
+        items: {
+          where: { deletedAt: null, status: { not: 'cancelled' } },
+          include: { product: true },
+        },
+      },
     });
 
     if (!order) {
       this.logger.error(`Order not found for printing receipt: ${orderId}`);
       return;
     }
+
+    // order.paid her ödemede yayınlanır; müşteri fişi yalnız adisyon tamamen
+    // ödenince (split'in son ödemesi) bir kez basılır — mükerrer fiş önlenir.
+    if (!order.isPaid) return;
 
     // İlgili rotayı bul
     const route = await this.prisma.printRoute.findFirst({
@@ -330,7 +339,7 @@ export class PrintingService implements OnModuleInit {
       items: order.items.map((item: any) => ({
         name: item.productNameSnapshot || item.product.name,
         quantity: item.quantity / 1000,
-        price: item.salePriceSnapshot / 100,
+        price: item.unitPrice / 100,
         total: item.lineTotal / 100,
       })),
       discount: (order.discountTotal || 0) / 100,
@@ -344,5 +353,111 @@ export class PrintingService implements OnModuleInit {
       printDoc,
       event.actorId || 'system',
     );
+    await this.persistReceipt(order.id, order.orderNo, DocumentType.Customer, printerId, printDoc);
+  }
+
+  @OnEvent('order.item.sent', { async: true })
+  async handleOrderItemSent(event: any) {
+    const { orderId, items } = event.payload;
+    this.logger.log(`Received order.item.sent for order: ${orderId} (${items.length} kalem)`);
+
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      this.logger.error(`Order not found for kitchen ticket: ${orderId}`);
+      return;
+    }
+
+    // Kalem -> kategori haritasi (olay yuku categoryId tasimaz, urunden cozulur).
+    const productIds = [
+      ...new Set(items.map((i: { productId?: string }) => i.productId).filter(Boolean)),
+    ] as string[];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, categoryId: true },
+    });
+    const catOf = new Map(products.map((p) => [p.id, p.categoryId]));
+
+    // Hazirlik rotalari (mutfak + bar). categoryId'li rota o kategoriyi ilgili
+    // yaziciya ( or. bar) yonlendirir; categoryId'siz rota genel mutfak fallback'i.
+    const routes = await this.prisma.printRoute.findMany({
+      where: {
+        branchId: event.branchId,
+        documentType: { in: [DocumentType.Kitchen, DocumentType.Bar] },
+        deletedAt: null,
+      },
+    });
+    type Target = { printerId: string; documentType: string };
+    const byCategory = new Map<string, Target>();
+    let general: Target | undefined;
+    for (const r of routes) {
+      if (r.categoryId) {
+        byCategory.set(r.categoryId, { printerId: r.printerId, documentType: r.documentType });
+      } else if (!general || r.documentType === DocumentType.Kitchen) {
+        general = { printerId: r.printerId, documentType: r.documentType };
+      }
+    }
+    if (!general) {
+      const def = await this.prisma.printer.findFirst({
+        where: { branchId: event.branchId, isDefault: true, deletedAt: null },
+      });
+      if (def) general = { printerId: def.id, documentType: DocumentType.Kitchen };
+    }
+
+    // Kalemleri hedef (yazici + belge tipi) bazinda grupla -> ayri bar/mutfak fisleri.
+    const groups = new Map<string, Target & { items: typeof items }>();
+    for (const it of items) {
+      const catId = catOf.get(it.productId);
+      const target = (catId && byCategory.get(catId)) || general;
+      if (!target) continue;
+      const key = `${target.printerId}:${target.documentType}`;
+      if (!groups.has(key)) groups.set(key, { ...target, items: [] });
+      groups.get(key)!.items.push(it);
+    }
+    if (groups.size === 0) {
+      this.logger.warn(`No kitchen/bar route or default printer for branch ${event.branchId}`);
+      return;
+    }
+
+    for (const g of groups.values()) {
+      const printDoc = {
+        title: g.documentType === DocumentType.Bar ? 'BAR FİŞİ' : 'MUTFAK FİŞİ',
+        orderNo: order.orderNo,
+        date: new Date().toISOString(),
+        items: g.items.map((i: { productName: string; quantity: number }) => ({
+          name: i.productName,
+          quantity: i.quantity / 1000,
+        })),
+      };
+      await this.enqueuePrintJob(
+        event.branchId,
+        g.printerId,
+        g.documentType,
+        printDoc,
+        event.actorId || 'system',
+      );
+      await this.persistReceipt(order.id, order.orderNo, g.documentType, g.printerId, printDoc);
+    }
+  }
+
+  // Basılan fişi kalıcı kaydeder (reprint + audit için). receiptNo: orderNo-<tip><sıra>.
+  private async persistReceipt(
+    orderId: string,
+    orderNo: string,
+    type: string,
+    printerId: string,
+    content: unknown,
+  ): Promise<void> {
+    const seq = await this.prisma.receipt.count({ where: { orderId, type } });
+    await this.prisma.receipt.create({
+      data: {
+        id: newId(),
+        orderId,
+        receiptNo: `${orderNo}-${type[0]!.toUpperCase()}${seq + 1}`,
+        type,
+        printedAt: new Date(),
+        printerId,
+        contentSnapshot: JSON.stringify(content),
+      },
+    });
   }
 }

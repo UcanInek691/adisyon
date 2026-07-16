@@ -117,6 +117,38 @@ export class CustomerService {
     return customer;
   }
 
+  // Veresiye ekstresi (CSV). ponytail: PDF motoru yeni bagimlilik -> eklenmedi;
+  // CSV zero-dep, Excel/muhasebe icin yeterli. PDF/termal render sunum katmani isi.
+  // Yuruyen bakiye hareketlerden kronolojik (asc) hesaplanir (kaynak = hareketler).
+  async getStatementCsv(user: AuthUser, id: string): Promise<{ filename: string; csv: string }> {
+    const customer = await this.getCustomer(user, id); // yoksa 404
+    const txns = [...(customer.debtAccount?.transactions ?? [])].sort(
+      (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime(),
+    );
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const tl = (kurus: number) => (kurus / 100).toFixed(2);
+    const rows: string[] = [['Tarih', 'Islem', 'Tutar (TL)', 'Bakiye (TL)', 'Not'].join(';')];
+    let balance = 0;
+    for (const t of txns) {
+      balance += t.amount;
+      const label = t.type === 'payment' ? 'Tahsilat' : 'Borc';
+      rows.push(
+        [
+          esc(t.occurredAt.toISOString()),
+          esc(label),
+          tl(t.amount),
+          tl(balance),
+          esc(t.note ?? ''),
+        ].join(';'),
+      );
+    }
+    rows.push('');
+    rows.push([esc('Musteri'), esc(customer.name)].join(';'));
+    rows.push([esc('Guncel Bakiye (TL)'), tl(customer.debtAccount?.balance ?? balance)].join(';'));
+    // BOM + CRLF -> Excel Turkce karakter ve satir sonu uyumu.
+    return { filename: `ekstre-${id}.csv`, csv: '﻿' + rows.join('\r\n') };
+  }
+
   // ===========================================================================
   // Veresiye Borç & Tahsilat İşlemleri
   // ===========================================================================
@@ -183,10 +215,13 @@ export class CustomerService {
         },
       });
 
-      // 3. Eğer ödeme Cash veya Card ile yapıldıysa, kasaya girdi olarak ekle
-      const activeSession = await tx.cashSession.findFirst({
-        where: { branchId: user.branchId, status: 'open', deletedAt: null },
-      });
+      // 3. Yalnizca NAKIT tahsilat kasa cekmecesine girer (kart/havale drawer'a girmez).
+      const activeSession =
+        dto.method === 'cash'
+          ? await tx.cashSession.findFirst({
+              where: { branchId: user.branchId, status: 'open', deletedAt: null },
+            })
+          : null;
 
       if (activeSession) {
         await tx.cashTransaction.create({
@@ -254,6 +289,54 @@ export class CustomerService {
         where: { id: account.id },
         data: {
           balance: { increment: amount },
+          version: { increment: 1 },
+        },
+      });
+    });
+  }
+
+  @OnEvent('order.refunded', { async: true })
+  async handleOrderRefunded(event: any) {
+    const { amount, method, orderId, customerId } = event.payload;
+    if (method !== 'debt') return;
+
+    if (!customerId) {
+      this.logger.error(
+        `Received order.refunded (debt) but no customerId provided for order: ${orderId}`,
+      );
+      return;
+    }
+
+    const account = await this.prisma.debtAccount.findUnique({ where: { customerId } });
+    if (!account) {
+      this.logger.error(`DebtAccount not found for customer: ${customerId}`);
+      return;
+    }
+
+    this.logger.log(
+      `Received order.refunded (debt). Reversing veresiye debt for customer: ${customerId}, order: ${orderId}`,
+    );
+
+    // Telafi kaydi (append-only): orijinal borc kaydini silmeyiz, azaltan kayit ekleriz.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.debtTransaction.create({
+        data: {
+          id: newId(),
+          debtAccountId: account.id,
+          type: DebtTxnType.Payment,
+          amount,
+          relatedOrderId: orderId,
+          createdBy: event.actorId || 'system',
+          note: `Adisyon iadesi - borç geri alma (Ref No: ${orderId})`,
+          occurredAt: new Date(),
+          deviceId: event.deviceId ?? null,
+        },
+      });
+
+      await tx.debtAccount.update({
+        where: { id: account.id },
+        data: {
+          balance: { decrement: amount },
           version: { increment: 1 },
         },
       });
