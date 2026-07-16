@@ -18,6 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { EventBusService } from '../common/events/event-bus.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { computeItemTotals, applyOrderDiscounts } from './orders.calc';
 import type {
   OpenOrderDto,
   AddItemDto,
@@ -32,8 +33,6 @@ import type {
 // Gun sonu saati (vars. 06:00 — CONVENTIONS.md). orderNo gunluk sirasi buna gore.
 // Not: ileride ApplicationSetting'ten okunacak (Ayarlar modulu).
 const DAY_END_HOUR = 6;
-
-type TotalsInput = { lineTotal: number; lineDiscount: number; taxRatePermille: number };
 
 /**
  * Siparis/Adisyon cekirdegi (PR1): adisyon ac, kalem ekle/guncelle/sil/void,
@@ -765,46 +764,27 @@ export class OrdersService {
   }
 
   // ===========================================================================
-  // Toplam motoru + yardimcilar
+  // Toplam motoru + yardimcilar (saf matematik: orders.calc.ts)
   // ===========================================================================
-  private computeTotals(items: TotalsInput[]) {
-    let subtotal = 0;
-    let discountTotal = 0;
-    let taxTotal = 0;
-    for (const it of items) {
-      const gross = it.lineTotal + it.lineDiscount;
-      subtotal += gross;
-      discountTotal += it.lineDiscount;
-      // KDV fiyata dahil -> icerideki vergi: net * rate / (1000 + rate).
-      taxTotal += Math.round((it.lineTotal * it.taxRatePermille) / (1000 + it.taxRatePermille));
-    }
-    const serviceCharge = 0;
-    const coverCharge = 0;
-    const grandTotal = subtotal - discountTotal + serviceCharge + coverCharge;
-    return { subtotal, discountTotal, taxTotal, serviceCharge, coverCharge, grandTotal };
-  }
-
   private async recompute(orderId: string) {
     const items = await this.prisma.orderItem.findMany({
       where: { orderId, deletedAt: null, status: { not: OrderItemStatus.Cancelled } },
       select: { lineTotal: true, lineDiscount: true, taxRatePermille: true },
     });
-    const totals = this.computeTotals(items);
     // Adisyon-seviyesi indirimler (satir indirimine EK). taxTotal bilgi amacli
     // satir bazinda kalir (ponytail: bilgi fisi, resmi mali degil).
     const orderDiscounts = await this.prisma.orderDiscount.findMany({
       where: { orderId, deletedAt: null },
       select: { amount: true },
     });
-    const orderDiscountTotal = orderDiscounts.reduce((s, d) => s + d.amount, 0);
-    const discountTotal = totals.discountTotal + orderDiscountTotal;
-    const grandTotal = totals.subtotal - discountTotal + totals.serviceCharge + totals.coverCharge;
+    const totals = applyOrderDiscounts(
+      computeItemTotals(items),
+      orderDiscounts.map((d) => d.amount),
+    );
     return this.prisma.order.update({
       where: { id: orderId },
       data: {
         ...totals,
-        discountTotal,
-        grandTotal,
         version: { increment: 1 },
         syncState: 'pending',
       },

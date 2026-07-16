@@ -1,35 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
-
-// Gun sonu saati (vars. 06:00 — CONVENTIONS.md; orders.service ile ayni).
-// ponytail: sabit; ileride ApplicationSetting'ten okunacak.
-const DAY_END_HOUR = 6;
+import { businessDayWindow } from './reports.calc';
 
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // YYYY-MM-DD is-gunu penceresi: [date 06:00, ertesi 06:00). CashSession.businessDay
-  // ile ayni gun tanimi. Gecersiz tarihte bugunun is-gunu kullanilir.
-  private businessDayWindow(dateStr: string): { day: string; start: Date; end: Date } {
-    const parsed = new Date(`${dateStr}T00:00:00`);
-    const base = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
-    const start = new Date(base);
-    start.setHours(DAY_END_HOUR, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
-    const day =
-      `${start.getFullYear()}-` +
-      `${String(start.getMonth() + 1).padStart(2, '0')}-` +
-      `${String(start.getDate()).padStart(2, '0')}`;
-    return { day, start, end };
-  }
-
   // Gun sonu (Z) ozeti: tek is-gunu icin satis + odeme + kasa oturumu + gider/gelir.
   // Sahibin gunu kapatirken okudugu tek rapor. Veresiye ayri raporda (customers/debt).
   async getEndOfDay(user: AuthUser, date: string) {
-    const { day, start, end } = this.businessDayWindow(date);
+    const { day, start, end } = businessDayWindow(date);
 
     const ordersSummary = await this.prisma.order.aggregate({
       where: {
