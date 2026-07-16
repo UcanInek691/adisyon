@@ -49,6 +49,51 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      # Testler eklendikce acilacak (CONVENTIONS.md §7 - kritik modullerde zorunlu):
-      # - name: Test
-      #   run: pnpm -r --if-present run test
+      - name: Unit tests (saf hesap self-check)
+        run: pnpm --filter @ado/backend run test:unit
+
+  # Kritik para yollari e2e: sunucu + seed + smoke (merge/split/iade/idempotency).
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      HUSKY: '0'
+      DATABASE_URL: 'file:./e2e.db'
+      JWT_ACCESS_SECRET: 'ci-test-access-secret-0123456789'
+      JWT_REFRESH_SECRET: 'ci-test-refresh-secret-0123456789'
+      SEED_OWNER_USERNAME: 'owner'
+      SEED_OWNER_PASSWORD: 'owner1234'
+      API_PORT: '3001'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm prisma:generate
+
+      - name: Build shared (@ado/shared dist -> backend bagimliligi)
+        run: pnpm --filter @ado/shared build
+
+      - name: Migrate + seed (temiz e2e DB)
+        run: |
+          pnpm exec prisma migrate deploy
+          pnpm --filter @ado/backend run seed
+
+      - name: Sunucu + e2e smoke
+        run: |
+          pnpm --filter @ado/backend run dev &
+          for i in $(seq 1 60); do
+            curl -sf "http://127.0.0.1:${API_PORT}/api/v1/health" >/dev/null && break
+            sleep 1
+          done
+          pnpm --filter @ado/backend run test:e2e

@@ -8,7 +8,10 @@
     "start": "node dist/main.js",
     "dev": "ts-node --transpile-only src/main.ts",
     "seed": "ts-node --transpile-only src/seed.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:unit",
+    "test:unit": "ts-node --transpile-only src/payments/payments.calc.ts && ts-node --transpile-only src/orders/orders.calc.ts && ts-node --transpile-only src/reports/reports.calc.ts",
+    "test:e2e": "node test/smoke.e2e.mjs"
   },
   "dependencies": {
     "@ado/shared": "workspace:*",
