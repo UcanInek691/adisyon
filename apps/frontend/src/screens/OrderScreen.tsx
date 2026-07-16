@@ -35,12 +35,34 @@ export default function OrderScreen() {
     onSuccess: refresh,
     onError: fail,
   });
+  const updateQty = useMutation({
+    mutationFn: (v: { itemId: string; quantity: number }) =>
+      api(`/orders/${id}/items/${v.itemId}`, { method: 'PATCH', body: { quantity: v.quantity } }),
+    onSuccess: refresh,
+    onError: fail,
+  });
+  const removeItem = useMutation({
+    mutationFn: (itemId: string) => api(`/orders/${id}/items/${itemId}`, { method: 'DELETE' }),
+    onSuccess: refresh,
+    onError: fail,
+  });
+  const voidItem = useMutation({
+    mutationFn: (itemId: string) =>
+      api(`/orders/${id}/items/${itemId}/void`, { method: 'POST', body: { reason: 'düzeltme' } }),
+    onSuccess: refresh,
+    onError: fail,
+  });
   const o = order.data;
   const cats = categories.data ?? [];
   const cat = activeCat || cats[0]?.id || '';
   const catProducts = (products.data ?? []).filter((p) => p.categoryId === cat);
   const hasPending = (o?.items ?? []).some((i) => i.status === 'pending');
-  const busy = addItem.isPending || sendKitchen.isPending;
+  const busy =
+    addItem.isPending ||
+    sendKitchen.isPending ||
+    updateQty.isPending ||
+    removeItem.isPending ||
+    voidItem.isPending;
 
   return (
     <div className="flex h-full flex-col bg-slate-100 md:flex-row">
@@ -60,17 +82,66 @@ export default function OrderScreen() {
           {(o?.items ?? []).length === 0 && (
             <li className="p-4 text-center text-slate-400">Henüz kalem yok</li>
           )}
-          {(o?.items ?? []).map((it) => (
-            <li key={it.id} className="flex items-center justify-between border-b px-2 py-2">
-              <div>
-                <div className="font-medium text-slate-800">{it.productNameSnapshot}</div>
-                <div className="text-xs text-slate-400">
-                  {formatQty(it.quantity)} ×{it.status === 'sent' ? ' • gönderildi' : ''}
+          {(o?.items ?? []).map((it) => {
+            const pending = it.status === 'pending';
+            return (
+              <li key={it.id} className="border-b px-2 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-slate-800">{it.productNameSnapshot}</span>
+                  <span className="font-semibold text-slate-700">{formatKurus(it.lineTotal)}</span>
                 </div>
-              </div>
-              <span className="font-semibold text-slate-700">{formatKurus(it.lineTotal)}</span>
-            </li>
-          ))}
+                <div className="mt-1 flex items-center gap-2">
+                  {pending ? (
+                    <>
+                      <button
+                        onClick={() =>
+                          it.quantity <= 1000
+                            ? removeItem.mutate(it.id)
+                            : updateQty.mutate({ itemId: it.id, quantity: it.quantity - 1000 })
+                        }
+                        disabled={busy}
+                        className="h-8 w-8 rounded-lg bg-slate-200 text-lg font-bold text-slate-700"
+                      >
+                        −
+                      </button>
+                      <span className="min-w-8 text-center font-medium">
+                        {formatQty(it.quantity)}
+                      </span>
+                      <button
+                        onClick={() =>
+                          updateQty.mutate({ itemId: it.id, quantity: it.quantity + 1000 })
+                        }
+                        disabled={busy}
+                        className="h-8 w-8 rounded-lg bg-slate-200 text-lg font-bold text-slate-700"
+                      >
+                        +
+                      </button>
+                      <button
+                        onClick={() => removeItem.mutate(it.id)}
+                        disabled={busy}
+                        className="ml-auto rounded-lg px-2 text-sm font-medium text-red-600"
+                      >
+                        Sil
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-xs text-slate-400">
+                        {formatQty(it.quantity)} • gönderildi
+                      </span>
+                      <button
+                        onClick={() => voidItem.mutate(it.id)}
+                        disabled={busy}
+                        className="ml-auto rounded-lg px-2 text-sm font-medium text-red-600"
+                      >
+                        İptal
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
 
         <div className="border-t p-4">
