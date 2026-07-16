@@ -13,6 +13,8 @@ import {
   orderQuerySchema,
   applyDiscountSchema,
   moveTableSchema,
+  mergeOrderSchema,
+  splitOrderSchema,
   type OpenOrderDto,
   type AddItemDto,
   type UpdateItemDto,
@@ -21,6 +23,8 @@ import {
   type OrderQueryDto,
   type ApplyDiscountDto,
   type MoveTableDto,
+  type MergeOrderDto,
+  type SplitOrderDto,
 } from './dto/orders.schemas';
 
 /**
@@ -127,6 +131,28 @@ export class OrdersController {
     @Body(new ZodValidationPipe(moveTableSchema)) dto: MoveTableDto,
   ) {
     return this.orders.moveTable(user, id, dto.tableId);
+  }
+
+  // Baska bir acik adisyonu (sourceOrderId) bu adisyona (:id) birlestirir.
+  @Post(':id/merge')
+  @RequirePermissions(Permission.OrderCreate)
+  merge(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(mergeOrderSchema)) dto: MergeOrderDto,
+  ) {
+    return this.orders.mergeOrders(user, id, dto.sourceOrderId);
+  }
+
+  // Bu adisyondan (:id) secili kalemleri yeni bir adisyona bolerek ayirir.
+  @Post(':id/split')
+  @RequirePermissions(Permission.OrderCreate)
+  split(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodValidationPipe(splitOrderSchema)) dto: SplitOrderDto,
+  ) {
+    return this.orders.splitOrder(user, id, dto);
   }
 
   // Bekleyen kalemleri mutfaga/bara ilet (hazirlik fisi + kalem kilidi).

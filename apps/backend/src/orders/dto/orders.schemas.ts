@@ -51,6 +51,19 @@ export const moveTableSchema = z.object({
 });
 export type MoveTableDto = z.infer<typeof moveTableSchema>;
 
+// --- Adisyon birlestir (kaynak -> hedef) ---
+export const mergeOrderSchema = z.object({
+  sourceOrderId: z.string().min(1),
+});
+export type MergeOrderDto = z.infer<typeof mergeOrderSchema>;
+
+// --- Adisyon bol (secili kalemleri yeni adisyona; istege bagli bos masaya) ---
+export const splitOrderSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(1),
+  targetTableId: z.string().min(1).nullish(),
+});
+export type SplitOrderDto = z.infer<typeof splitOrderSchema>;
+
 // --- Adisyon-seviyesi indirim ---
 // percent: value = yuzde (1-100). amount: value = kurus.
 export const applyDiscountSchema = z.object({

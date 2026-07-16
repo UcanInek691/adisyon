@@ -26,6 +26,7 @@ import type {
   CancelOrderDto,
   OrderQueryDto,
   ApplyDiscountDto,
+  SplitOrderDto,
 } from './dto/orders.schemas';
 
 // Gun sonu saati (vars. 06:00 — CONVENTIONS.md). orderNo gunluk sirasi buna gore.
@@ -456,6 +457,161 @@ export class OrdersService {
     const updated = await this.orderOrThrow(user.branchId, orderId);
     await this.publishOrderEvent(user, DomainEventName.OrderUpdated, updated);
     return this.orderWithItems(orderId);
+  }
+
+  // ===========================================================================
+  // Adisyon birlestir / bol (merge / split)
+  // ===========================================================================
+  // Iki acik adisyonu birlestirir: kaynagin kalem + adisyon-indirimleri hedefe
+  // tasinir, kaynak adisyon iptal (Cancelled) edilir, masasi serbest kalir.
+  // Gelir korunur: kalemler ve indirim tutarlari aynen tasinir, hedefte yeniden
+  // hesaplanir. Her indirim <= kendi ara toplami oldugundan birlesik toplamda da
+  // toplam indirim <= birlesik ara toplam -> grandTotal negatif olmaz.
+  async mergeOrders(user: AuthUser, targetOrderId: string, sourceOrderId: string) {
+    if (targetOrderId === sourceOrderId) {
+      throw new BadRequestException({
+        code: 'MERGE_SAME_ORDER',
+        message: 'Adisyon kendisiyle birlestirilemez.',
+      });
+    }
+    const target = await this.orderOpenOrThrow(user.branchId, targetOrderId);
+    const source = await this.orderOpenOrThrow(user.branchId, sourceOrderId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.updateMany({
+        where: { orderId: sourceOrderId, deletedAt: null },
+        data: { orderId: targetOrderId, version: { increment: 1 }, syncState: 'pending' },
+      });
+      await tx.orderDiscount.updateMany({
+        where: { orderId: sourceOrderId, deletedAt: null },
+        data: { orderId: targetOrderId, version: { increment: 1 }, syncState: 'pending' },
+      });
+      await tx.order.update({
+        where: { id: sourceOrderId },
+        data: {
+          status: OrderStatus.Cancelled,
+          closedBy: user.userId,
+          closedAt: new Date(),
+          note: `Birlestirildi -> ${target.orderNo}`,
+          version: { increment: 1 },
+          syncState: 'pending',
+        },
+      });
+    });
+    await this.recompute(sourceOrderId); // 0 kalem kaldi -> toplamlar sifirlanir
+    const updatedTarget = await this.recompute(targetOrderId);
+    if (source.tableId) await this.freeTableIfNoOpenOrder(user.branchId, source.tableId);
+
+    await this.audit.record({
+      branchId: user.branchId,
+      action: 'order.merge',
+      entityType: 'order',
+      entityId: targetOrderId,
+      userId: user.userId,
+      oldValue: { sourceOrderId, sourceOrderNo: source.orderNo },
+      newValue: { targetOrderId, targetOrderNo: target.orderNo },
+      ...this.provenance(user),
+    });
+    await this.publishOrderEvent(user, DomainEventName.OrderUpdated, updatedTarget);
+    const cancelledSource = await this.orderOrThrow(user.branchId, sourceOrderId);
+    await this.publishOrderEvent(user, DomainEventName.OrderUpdated, cancelledSource);
+    return this.orderWithItems(targetOrderId);
+  }
+
+  // Adisyonu boler: secili kalemler yeni bir adisyona (istege bagli bos masaya)
+  // tasinir; kaynak adisyon acik kalir. Adisyon-seviyesi indirimler kaynakta kalir.
+  // En az bir kalem kaynakta kalmali (tumu tasinacaksa masa-tasi kullanilir).
+  // parentOrderId ile bolme soyagaci izlenir.
+  async splitOrder(user: AuthUser, sourceOrderId: string, dto: SplitOrderDto) {
+    const source = await this.orderOpenOrThrow(user.branchId, sourceOrderId);
+    const items = await this.prisma.orderItem.findMany({
+      where: { id: { in: dto.itemIds }, orderId: sourceOrderId, deletedAt: null },
+    });
+    if (items.length !== dto.itemIds.length) {
+      throw new BadRequestException({
+        code: 'SPLIT_ITEMS_INVALID',
+        message: 'Secili kalemlerden bazilari bu adisyonda degil.',
+      });
+    }
+    const remaining = await this.prisma.orderItem.count({
+      where: { orderId: sourceOrderId, deletedAt: null, id: { notIn: dto.itemIds } },
+    });
+    if (remaining === 0) {
+      throw new BadRequestException({
+        code: 'SPLIT_EMPTY_SOURCE',
+        message: 'Tum kalemler bolunemez; kaynakta en az bir kalem kalmali (masa-tasi kullanin).',
+      });
+    }
+    if (dto.targetTableId) {
+      await this.tableOrThrow(user.branchId, dto.targetTableId);
+      const occupied = await this.prisma.order.findFirst({
+        where: {
+          branchId: user.branchId,
+          tableId: dto.targetTableId,
+          status: OrderStatus.Open,
+          deletedAt: null,
+        },
+      });
+      if (occupied) {
+        throw new ConflictException({
+          code: 'TABLE_HAS_OPEN_ORDER',
+          message: 'Hedef masada acik adisyon var.',
+        });
+      }
+    }
+
+    const newOrderId = newId();
+    await this.prisma.$transaction(async (tx) => {
+      const orderNo = await this.generateOrderNo(tx, user.branchId);
+      await tx.order.create({
+        data: {
+          id: newOrderId,
+          branchId: user.branchId,
+          tableId: dto.targetTableId ?? null,
+          parentOrderId: sourceOrderId,
+          orderNo,
+          status: OrderStatus.Open,
+          openedBy: user.userId,
+          openedAt: new Date(),
+          guestCount: 1,
+          note: `Bolundu <- ${source.orderNo}`,
+          ...this.provenance(user),
+        },
+      });
+      await tx.orderItem.updateMany({
+        where: { id: { in: dto.itemIds }, orderId: sourceOrderId, deletedAt: null },
+        data: { orderId: newOrderId, version: { increment: 1 }, syncState: 'pending' },
+      });
+      if (dto.targetTableId) {
+        await tx.table.update({
+          where: { id: dto.targetTableId },
+          data: { status: TableStatus.Occupied, version: { increment: 1 }, syncState: 'pending' },
+        });
+      }
+    });
+    const updatedSource = await this.recompute(sourceOrderId);
+    const newOrder = await this.recompute(newOrderId);
+
+    await this.audit.record({
+      branchId: user.branchId,
+      action: 'order.split',
+      entityType: 'order',
+      entityId: newOrderId,
+      userId: user.userId,
+      oldValue: { sourceOrderId, sourceOrderNo: source.orderNo },
+      newValue: {
+        newOrderId,
+        itemIds: dto.itemIds,
+        targetTableId: dto.targetTableId ?? null,
+      },
+      ...this.provenance(user),
+    });
+    await this.publishOrderEvent(user, DomainEventName.OrderCreated, newOrder);
+    await this.publishOrderEvent(user, DomainEventName.OrderUpdated, updatedSource);
+    return {
+      source: await this.orderWithItems(sourceOrderId),
+      created: await this.orderWithItems(newOrderId),
+    };
   }
 
   // ===========================================================================
