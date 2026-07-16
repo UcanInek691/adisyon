@@ -3,6 +3,7 @@ import { isAuthed } from './lib/api';
 import LoginScreen from './screens/LoginScreen';
 import TablesScreen from './screens/TablesScreen';
 import OrderScreen from './screens/OrderScreen';
+import ReportScreen from './screens/ReportScreen';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return isAuthed() ? <>{children}</> : <Navigate to="/login" replace />;
@@ -25,6 +26,14 @@ export default function App() {
         element={
           <RequireAuth>
             <OrderScreen />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/report"
+        element={
+          <RequireAuth>
+            <ReportScreen />
           </RequireAuth>
         }
       />

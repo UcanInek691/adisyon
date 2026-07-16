@@ -54,6 +54,14 @@ export default function OrderScreen() {
     onSuccess: refresh,
     onError: fail,
   });
+  const hold = useMutation({
+    mutationFn: () => api(`/orders/${id}/hold`, { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      nav('/', { replace: true });
+    },
+    onError: fail,
+  });
   const o = order.data;
   const cats = categories.data ?? [];
   const cat = activeCat || cats[0]?.id || '';
@@ -162,13 +170,22 @@ export default function OrderScreen() {
             <span>{formatKurus(o?.grandTotal ?? 0)}</span>
           </div>
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-          <button
-            onClick={() => setDiscountOpen(true)}
-            disabled={busy || !o || o.status !== 'open'}
-            className="mb-2 w-full rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
-          >
-            İndirim
-          </button>
+          <div className="mb-2 grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setDiscountOpen(true)}
+              disabled={busy || !o || o.status !== 'open'}
+              className="rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
+            >
+              İndirim
+            </button>
+            <button
+              onClick={() => hold.mutate()}
+              disabled={busy || hold.isPending || !o || o.status !== 'open'}
+              className="rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
+            >
+              Beklet
+            </button>
+          </div>
           <div className={`grid gap-2 ${canPay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <button
               onClick={() => sendKitchen.mutate()}

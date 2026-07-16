@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, clearSession, getUser } from '../lib/api';
+import { api, clearSession, getUser, hasPerm } from '../lib/api';
 import { formatKurus } from '../lib/format';
 import type { Hall, Order, Table } from '../lib/types';
 
@@ -15,9 +15,15 @@ export default function TablesScreen() {
     queryKey: ['orders', 'open'],
     queryFn: () => api<Order[]>('/orders?open=true'),
   });
+  const heldOrders = useQuery({
+    queryKey: ['orders', 'held'],
+    queryFn: () => api<Order[]>('/orders?status=held'),
+  });
 
   const openByTable = new Map<string, Order>();
   for (const o of openOrders.data ?? []) if (o.tableId) openByTable.set(o.tableId, o);
+  const heldByTable = new Map<string, Order>();
+  for (const o of heldOrders.data ?? []) if (o.tableId) heldByTable.set(o.tableId, o);
 
   const createOrder = useMutation({
     mutationFn: (tableId: string) => api<Order>('/orders', { method: 'POST', body: { tableId } }),
@@ -26,10 +32,19 @@ export default function TablesScreen() {
       nav(`/orders/${order.id}`);
     },
   });
+  const resumeOrder = useMutation({
+    mutationFn: (orderId: string) => api<Order>(`/orders/${orderId}/resume`, { method: 'POST' }),
+    onSuccess: (order) => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      nav(`/orders/${order.id}`);
+    },
+  });
 
   function onTable(t: Table) {
     const open = openByTable.get(t.id);
+    const held = heldByTable.get(t.id);
     if (open) nav(`/orders/${open.id}`);
+    else if (held) resumeOrder.mutate(held.id);
     else createOrder.mutate(t.id);
   }
 
@@ -39,6 +54,7 @@ export default function TablesScreen() {
   }
 
   const loading = halls.isLoading || tables.isLoading || openOrders.isLoading;
+  const busy = createOrder.isPending || resumeOrder.isPending;
 
   return (
     <div className="min-h-full bg-slate-100">
@@ -46,6 +62,14 @@ export default function TablesScreen() {
         <h1 className="text-xl font-bold text-slate-800">Masalar</h1>
         <div className="flex items-center gap-3 text-sm text-slate-500">
           <span>{user?.displayName ?? user?.role ?? ''}</span>
+          {hasPerm('report.view') && (
+            <button
+              onClick={() => nav('/report')}
+              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
+            >
+              Gün Sonu
+            </button>
+          )}
           <button onClick={logout} className="rounded-lg bg-slate-200 px-3 py-1 font-medium">
             Çıkış
           </button>
@@ -62,17 +86,26 @@ export default function TablesScreen() {
               <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
                 {hallTables.map((t) => {
                   const open = openByTable.get(t.id);
+                  const held = !open ? heldByTable.get(t.id) : undefined;
+                  const active = open ?? held;
                   return (
                     <button
                       key={t.id}
                       onClick={() => onTable(t)}
-                      disabled={createOrder.isPending}
+                      disabled={busy}
                       className={`flex aspect-square flex-col items-center justify-center rounded-xl p-2 text-center font-semibold shadow ${
-                        open ? 'bg-amber-500 text-white' : 'bg-white text-slate-700'
+                        open
+                          ? 'bg-amber-500 text-white'
+                          : held
+                            ? 'bg-purple-500 text-white'
+                            : 'bg-white text-slate-700'
                       }`}
                     >
                       <span className="text-lg">{t.name}</span>
-                      {open && <span className="mt-1 text-xs">{formatKurus(open.grandTotal)}</span>}
+                      {held && <span className="mt-0.5 text-[10px]">bekletiliyor</span>}
+                      {active && (
+                        <span className="mt-1 text-xs">{formatKurus(active.grandTotal)}</span>
+                      )}
                     </button>
                   );
                 })}
