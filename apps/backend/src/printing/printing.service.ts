@@ -288,18 +288,27 @@ export class PrintingService implements OnModuleInit {
   @OnEvent('order.paid', { async: true })
   async handleOrderPaid(event: any) {
     const { orderId } = event.payload;
-    this.logger.log(`Received order.paid event. Enqueuing receipt print job for order: ${orderId}`);
+    this.logger.log(`Received order.paid event for order: ${orderId}`);
 
-    // Sipariş verilerini DB'den çek
+    // Sipariş verilerini DB'den çek (iptal/silinmiş kalemler fişe girmez)
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: { include: { product: true } } },
+      include: {
+        items: {
+          where: { deletedAt: null, status: { not: 'cancelled' } },
+          include: { product: true },
+        },
+      },
     });
 
     if (!order) {
       this.logger.error(`Order not found for printing receipt: ${orderId}`);
       return;
     }
+
+    // order.paid her ödemede yayınlanır; müşteri fişi yalnız adisyon tamamen
+    // ödenince (split'in son ödemesi) bir kez basılır — mükerrer fiş önlenir.
+    if (!order.isPaid) return;
 
     // İlgili rotayı bul
     const route = await this.prisma.printRoute.findFirst({
@@ -330,7 +339,7 @@ export class PrintingService implements OnModuleInit {
       items: order.items.map((item: any) => ({
         name: item.productNameSnapshot || item.product.name,
         quantity: item.quantity / 1000,
-        price: item.salePriceSnapshot / 100,
+        price: item.unitPrice / 100,
         total: item.lineTotal / 100,
       })),
       discount: (order.discountTotal || 0) / 100,
@@ -344,5 +353,76 @@ export class PrintingService implements OnModuleInit {
       printDoc,
       event.actorId || 'system',
     );
+    await this.persistReceipt(order.id, order.orderNo, DocumentType.Customer, printerId, printDoc);
+  }
+
+  @OnEvent('order.item.sent', { async: true })
+  async handleOrderItemSent(event: any) {
+    const { orderId, items } = event.payload;
+    this.logger.log(`Received order.item.sent for order: ${orderId} (${items.length} kalem)`);
+
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      this.logger.error(`Order not found for kitchen ticket: ${orderId}`);
+      return;
+    }
+
+    // Mutfak rotası → yoksa varsayılan yazıcı.
+    const route = await this.prisma.printRoute.findFirst({
+      where: { branchId: event.branchId, documentType: DocumentType.Kitchen, deletedAt: null },
+    });
+    let printerId = route?.printerId;
+    if (!printerId) {
+      const def = await this.prisma.printer.findFirst({
+        where: { branchId: event.branchId, isDefault: true, deletedAt: null },
+      });
+      printerId = def?.id;
+    }
+    if (!printerId) {
+      this.logger.warn(`No kitchen route or default printer for branch ${event.branchId}`);
+      return;
+    }
+
+    // ponytail: bar/mutfak kategoriye göre ayrım sonraki iş; şimdilik hepsi mutfak fişi.
+    const printDoc = {
+      title: 'MUTFAK FİŞİ',
+      orderNo: order.orderNo,
+      date: new Date().toISOString(),
+      items: items.map((i: { productName: string; quantity: number }) => ({
+        name: i.productName,
+        quantity: i.quantity / 1000,
+      })),
+    };
+
+    await this.enqueuePrintJob(
+      event.branchId,
+      printerId,
+      DocumentType.Kitchen,
+      printDoc,
+      event.actorId || 'system',
+    );
+    await this.persistReceipt(order.id, order.orderNo, DocumentType.Kitchen, printerId, printDoc);
+  }
+
+  // Basılan fişi kalıcı kaydeder (reprint + audit için). receiptNo: orderNo-<tip><sıra>.
+  private async persistReceipt(
+    orderId: string,
+    orderNo: string,
+    type: string,
+    printerId: string,
+    content: unknown,
+  ): Promise<void> {
+    const seq = await this.prisma.receipt.count({ where: { orderId, type } });
+    await this.prisma.receipt.create({
+      data: {
+        id: newId(),
+        orderId,
+        receiptNo: `${orderNo}-${type[0]!.toUpperCase()}${seq + 1}`,
+        type,
+        printedAt: new Date(),
+        printerId,
+        contentSnapshot: JSON.stringify(content),
+      },
+    });
   }
 }

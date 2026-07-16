@@ -159,6 +159,9 @@ export class CashService {
   @OnEvent('order.paid', { async: true })
   async handleOrderPaid(event: any) {
     const { amount, method, paymentId } = event.payload;
+    // Yalnizca nakit odeme kasa cekmecesine girer; kart/havale/qr/veresiye girmez
+    // (aksi halde kapanis sayiminda beklenen tutar sismis olur).
+    if (method !== 'cash') return;
     this.logger.log(
       `Received order.paid event. Logging cash transaction for payment: ${paymentId}`,
     );
@@ -184,6 +187,36 @@ export class CashService {
         relatedPaymentId: paymentId,
         createdBy: event.actorId || 'system',
         note: `Sipariş satışı (Ödeme Ref: ${paymentId})`,
+      },
+    });
+  }
+
+  @OnEvent('order.refunded', { async: true })
+  async handleOrderRefunded(event: any) {
+    const { amount, method, paymentId } = event.payload;
+    // Yalnizca nakit iade cekmeceden cikar (kart/havale/veresiye cekmeceyi etkilemez).
+    if (method !== 'cash') return;
+
+    const session = await this.prisma.cashSession.findFirst({
+      where: { branchId: event.branchId, status: 'open', deletedAt: null },
+    });
+    if (!session) {
+      this.logger.warn(
+        `Received order.refunded but no active CashSession found for branch ${event.branchId}`,
+      );
+      return;
+    }
+
+    await this.prisma.cashTransaction.create({
+      data: {
+        id: newId(),
+        cashSessionId: session.id,
+        type: CashTxnType.Refund,
+        amount: -amount, // cekmeceden cikis -> kapanis beklenen tutarini azaltir
+        method: 'cash',
+        relatedPaymentId: paymentId,
+        createdBy: event.actorId || 'system',
+        note: `İade (Ödeme Ref: ${paymentId})`,
       },
     });
   }

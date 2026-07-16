@@ -43,6 +43,7 @@ export class ReportsService {
           deletedAt: null,
         },
         deletedAt: null,
+        status: { not: 'cancelled' }, // void edilmis kalem satisa sayilmaz
       },
       include: {
         product: { include: { category: true } },
@@ -83,6 +84,7 @@ export class ReportsService {
           deletedAt: null,
         },
         deletedAt: null,
+        status: { not: 'cancelled' }, // void edilmis kalem satisa sayilmaz
       },
       include: {
         product: true,
