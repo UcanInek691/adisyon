@@ -1,0 +1,46 @@
+// Backend yanit sekilleri (Faz-1 kullanilan alt kume).
+export interface Hall {
+  id: string;
+  name: string;
+  sortOrder?: number;
+}
+
+export interface Table {
+  id: string;
+  hallId: string;
+  name: string;
+  status: string; // empty | occupied | ...
+  seats?: number;
+}
+
+export interface OrderItem {
+  id: string;
+  productId: string;
+  productNameSnapshot: string;
+  quantity: number; // milis
+  lineTotal: number; // kurus
+  status: string; // pending | sent | ...
+}
+
+export interface Order {
+  id: string;
+  orderNo: string;
+  tableId: string | null;
+  status: string; // open | held | completed | cancelled
+  grandTotal: number; // kurus
+  subtotal: number;
+  discountTotal: number;
+  items: OrderItem[];
+}
+
+export interface Category {
+  id: string;
+  name: string;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  categoryId: string;
+  salePrice: number; // kurus
+}
