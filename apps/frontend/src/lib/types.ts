@@ -22,6 +22,14 @@ export interface OrderItem {
   status: string; // pending | sent | ...
 }
 
+export interface Discount {
+  id: string;
+  type: string; // percent | amount
+  value: number; // percent: yuzde; amount: kurus
+  amount: number; // hesaplanmis indirim (kurus)
+  reason?: string | null;
+}
+
 export interface Order {
   id: string;
   orderNo: string;
@@ -31,6 +39,7 @@ export interface Order {
   subtotal: number;
   discountTotal: number;
   items: OrderItem[];
+  discounts?: Discount[];
 }
 
 export interface Payment {

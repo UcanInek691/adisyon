@@ -5,6 +5,7 @@ import { api, ApiError } from '../lib/api';
 import { formatKurus, formatQty } from '../lib/format';
 import type { Category, Order, Product } from '../lib/types';
 import PaymentModal from './PaymentModal';
+import DiscountModal from './DiscountModal';
 
 export default function OrderScreen() {
   const { id = '' } = useParams();
@@ -13,6 +14,7 @@ export default function OrderScreen() {
   const [activeCat, setActiveCat] = useState<string>('');
   const [error, setError] = useState('');
   const [payOpen, setPayOpen] = useState(false);
+  const [discountOpen, setDiscountOpen] = useState(false);
 
   const order = useQuery({ queryKey: ['order', id], queryFn: () => api<Order>(`/orders/${id}`) });
   const categories = useQuery({
@@ -145,11 +147,24 @@ export default function OrderScreen() {
         </ul>
 
         <div className="border-t p-4">
+          {(o?.discountTotal ?? 0) > 0 && (
+            <div className="mb-1 flex items-center justify-between text-sm text-slate-500">
+              <span>İndirim</span>
+              <span>−{formatKurus(o?.discountTotal ?? 0)}</span>
+            </div>
+          )}
           <div className="mb-3 flex items-center justify-between text-lg font-bold text-slate-800">
             <span>Toplam</span>
             <span>{formatKurus(o?.grandTotal ?? 0)}</span>
           </div>
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+          <button
+            onClick={() => setDiscountOpen(true)}
+            disabled={busy || !o || o.status !== 'open'}
+            className="mb-2 w-full rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
+          >
+            İndirim
+          </button>
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => sendKitchen.mutate()}
@@ -205,6 +220,13 @@ export default function OrderScreen() {
           grandTotal={o.grandTotal}
           onClose={() => setPayOpen(false)}
           onCompleted={() => nav('/', { replace: true })}
+        />
+      )}
+      {discountOpen && o && (
+        <DiscountModal
+          orderId={id}
+          discounts={o.discounts ?? []}
+          onClose={() => setDiscountOpen(false)}
         />
       )}
     </div>
