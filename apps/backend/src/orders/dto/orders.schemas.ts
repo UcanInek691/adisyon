@@ -45,6 +45,21 @@ export const cancelOrderSchema = z.object({
 });
 export type CancelOrderDto = z.infer<typeof cancelOrderSchema>;
 
+// --- Masa tasi (baska masaya) ---
+export const moveTableSchema = z.object({
+  tableId: z.string().min(1),
+});
+export type MoveTableDto = z.infer<typeof moveTableSchema>;
+
+// --- Adisyon-seviyesi indirim ---
+// percent: value = yuzde (1-100). amount: value = kurus.
+export const applyDiscountSchema = z.object({
+  type: z.enum(['percent', 'amount']),
+  value: z.number().int().positive(),
+  reason: z.string().nullish(),
+});
+export type ApplyDiscountDto = z.infer<typeof applyDiscountSchema>;
+
 // --- Sorgu ---
 export const orderQuerySchema = z.object({
   tableId: z.string().optional(),
