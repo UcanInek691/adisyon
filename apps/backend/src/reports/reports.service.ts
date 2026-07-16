@@ -2,9 +2,96 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 
+// Gun sonu saati (vars. 06:00 — CONVENTIONS.md; orders.service ile ayni).
+// ponytail: sabit; ileride ApplicationSetting'ten okunacak.
+const DAY_END_HOUR = 6;
+
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // YYYY-MM-DD is-gunu penceresi: [date 06:00, ertesi 06:00). CashSession.businessDay
+  // ile ayni gun tanimi. Gecersiz tarihte bugunun is-gunu kullanilir.
+  private businessDayWindow(dateStr: string): { day: string; start: Date; end: Date } {
+    const parsed = new Date(`${dateStr}T00:00:00`);
+    const base = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+    const start = new Date(base);
+    start.setHours(DAY_END_HOUR, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    const day =
+      `${start.getFullYear()}-` +
+      `${String(start.getMonth() + 1).padStart(2, '0')}-` +
+      `${String(start.getDate()).padStart(2, '0')}`;
+    return { day, start, end };
+  }
+
+  // Gun sonu (Z) ozeti: tek is-gunu icin satis + odeme + kasa oturumu + gider/gelir.
+  // Sahibin gunu kapatirken okudugu tek rapor. Veresiye ayri raporda (customers/debt).
+  async getEndOfDay(user: AuthUser, date: string) {
+    const { day, start, end } = this.businessDayWindow(date);
+
+    const ordersSummary = await this.prisma.order.aggregate({
+      where: {
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _count: { id: true },
+      _sum: { subtotal: true, discountTotal: true, grandTotal: true },
+    });
+
+    const paymentsByMethod = await this.prisma.payment.groupBy({
+      by: ['method'],
+      where: {
+        order: { branchId: user.branchId },
+        paidAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _sum: { amount: true },
+    });
+
+    const sessions = await this.prisma.cashSession.findMany({
+      where: { branchId: user.branchId, businessDay: day, deletedAt: null },
+      orderBy: { openedAt: 'asc' },
+    });
+
+    const expenses = await this.prisma.expense.aggregate({
+      where: { branchId: user.branchId, spentAt: { gte: start, lt: end }, deletedAt: null },
+      _sum: { amount: true },
+    });
+    const incomes = await this.prisma.income.aggregate({
+      where: { branchId: user.branchId, receivedAt: { gte: start, lt: end }, deletedAt: null },
+      _sum: { amount: true },
+    });
+
+    return {
+      businessDay: day,
+      sales: {
+        count: ordersSummary._count.id || 0,
+        grossKurus: ordersSummary._sum.subtotal || 0,
+        discountKurus: ordersSummary._sum.discountTotal || 0,
+        netKurus: ordersSummary._sum.grandTotal || 0,
+      },
+      payments: paymentsByMethod.map((p) => ({ method: p.method, totalKurus: p._sum.amount || 0 })),
+      cash: {
+        sessions: sessions.map((s) => ({
+          id: s.id,
+          status: s.status,
+          openedAt: s.openedAt,
+          closedAt: s.closedAt,
+          openingFloatKurus: s.openingFloat,
+          expectedKurus: s.expectedAmount,
+          countedKurus: s.countedAmount,
+          differenceKurus: s.difference,
+        })),
+        differenceTotalKurus: sessions.reduce((sum, s) => sum + (s.difference ?? 0), 0),
+      },
+      expensesKurus: expenses._sum.amount || 0,
+      incomesKurus: incomes._sum.amount || 0,
+    };
+  }
 
   async getDailySales(user: AuthUser, start: string, end: string) {
     const startDate = new Date(start);

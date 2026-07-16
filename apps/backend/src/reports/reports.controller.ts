@@ -36,6 +36,13 @@ export class ReportsController {
     );
   }
 
+  // Gun sonu (Z) ozeti. date=YYYY-MM-DD (yoksa bugunun is-gunu).
+  @Get('end-of-day')
+  @RequirePermissions(Permission.ReportView)
+  getEndOfDay(@CurrentUser() user: AuthUser, @Query('date') date: string) {
+    return this.reportsService.getEndOfDay(user, date || '');
+  }
+
   @Get('customers/debt')
   @RequirePermissions(Permission.ReportView)
   getCustomerDebts(@CurrentUser() user: AuthUser) {
