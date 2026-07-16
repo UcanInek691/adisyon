@@ -117,6 +117,38 @@ export class CustomerService {
     return customer;
   }
 
+  // Veresiye ekstresi (CSV). ponytail: PDF motoru yeni bagimlilik -> eklenmedi;
+  // CSV zero-dep, Excel/muhasebe icin yeterli. PDF/termal render sunum katmani isi.
+  // Yuruyen bakiye hareketlerden kronolojik (asc) hesaplanir (kaynak = hareketler).
+  async getStatementCsv(user: AuthUser, id: string): Promise<{ filename: string; csv: string }> {
+    const customer = await this.getCustomer(user, id); // yoksa 404
+    const txns = [...(customer.debtAccount?.transactions ?? [])].sort(
+      (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime(),
+    );
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const tl = (kurus: number) => (kurus / 100).toFixed(2);
+    const rows: string[] = [['Tarih', 'Islem', 'Tutar (TL)', 'Bakiye (TL)', 'Not'].join(';')];
+    let balance = 0;
+    for (const t of txns) {
+      balance += t.amount;
+      const label = t.type === 'payment' ? 'Tahsilat' : 'Borc';
+      rows.push(
+        [
+          esc(t.occurredAt.toISOString()),
+          esc(label),
+          tl(t.amount),
+          tl(balance),
+          esc(t.note ?? ''),
+        ].join(';'),
+      );
+    }
+    rows.push('');
+    rows.push([esc('Musteri'), esc(customer.name)].join(';'));
+    rows.push([esc('Guncel Bakiye (TL)'), tl(customer.debtAccount?.balance ?? balance)].join(';'));
+    // BOM + CRLF -> Excel Turkce karakter ve satir sonu uyumu.
+    return { filename: `ekstre-${id}.csv`, csv: '﻿' + rows.join('\r\n') };
+  }
+
   // ===========================================================================
   // Veresiye Borç & Tahsilat İşlemleri
   // ===========================================================================

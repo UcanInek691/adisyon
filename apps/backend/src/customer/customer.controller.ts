@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { Permission } from '@ado/shared';
 import { CurrentUser, type AuthUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
@@ -54,6 +55,16 @@ export class CustomerController {
   @RequirePermissions(Permission.DebtManage)
   get(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.customerService.getCustomer(user, id);
+  }
+
+  // Veresiye ekstresi CSV indir. @Res -> global response zarfini bypass eder.
+  @Get(':id/statement.csv')
+  @RequirePermissions(Permission.DebtManage)
+  async statementCsv(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res() res: Response) {
+    const { filename, csv } = await this.customerService.getStatementCsv(user, id);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(csv);
   }
 
   @Post(':id/debt')
