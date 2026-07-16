@@ -367,41 +367,76 @@ export class PrintingService implements OnModuleInit {
       return;
     }
 
-    // Mutfak rotası → yoksa varsayılan yazıcı.
-    const route = await this.prisma.printRoute.findFirst({
-      where: { branchId: event.branchId, documentType: DocumentType.Kitchen, deletedAt: null },
+    // Kalem -> kategori haritasi (olay yuku categoryId tasimaz, urunden cozulur).
+    const productIds = [
+      ...new Set(items.map((i: { productId?: string }) => i.productId).filter(Boolean)),
+    ] as string[];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, categoryId: true },
     });
-    let printerId = route?.printerId;
-    if (!printerId) {
+    const catOf = new Map(products.map((p) => [p.id, p.categoryId]));
+
+    // Hazirlik rotalari (mutfak + bar). categoryId'li rota o kategoriyi ilgili
+    // yaziciya ( or. bar) yonlendirir; categoryId'siz rota genel mutfak fallback'i.
+    const routes = await this.prisma.printRoute.findMany({
+      where: {
+        branchId: event.branchId,
+        documentType: { in: [DocumentType.Kitchen, DocumentType.Bar] },
+        deletedAt: null,
+      },
+    });
+    type Target = { printerId: string; documentType: string };
+    const byCategory = new Map<string, Target>();
+    let general: Target | undefined;
+    for (const r of routes) {
+      if (r.categoryId) {
+        byCategory.set(r.categoryId, { printerId: r.printerId, documentType: r.documentType });
+      } else if (!general || r.documentType === DocumentType.Kitchen) {
+        general = { printerId: r.printerId, documentType: r.documentType };
+      }
+    }
+    if (!general) {
       const def = await this.prisma.printer.findFirst({
         where: { branchId: event.branchId, isDefault: true, deletedAt: null },
       });
-      printerId = def?.id;
+      if (def) general = { printerId: def.id, documentType: DocumentType.Kitchen };
     }
-    if (!printerId) {
-      this.logger.warn(`No kitchen route or default printer for branch ${event.branchId}`);
+
+    // Kalemleri hedef (yazici + belge tipi) bazinda grupla -> ayri bar/mutfak fisleri.
+    const groups = new Map<string, Target & { items: typeof items }>();
+    for (const it of items) {
+      const catId = catOf.get(it.productId);
+      const target = (catId && byCategory.get(catId)) || general;
+      if (!target) continue;
+      const key = `${target.printerId}:${target.documentType}`;
+      if (!groups.has(key)) groups.set(key, { ...target, items: [] });
+      groups.get(key)!.items.push(it);
+    }
+    if (groups.size === 0) {
+      this.logger.warn(`No kitchen/bar route or default printer for branch ${event.branchId}`);
       return;
     }
 
-    // ponytail: bar/mutfak kategoriye göre ayrım sonraki iş; şimdilik hepsi mutfak fişi.
-    const printDoc = {
-      title: 'MUTFAK FİŞİ',
-      orderNo: order.orderNo,
-      date: new Date().toISOString(),
-      items: items.map((i: { productName: string; quantity: number }) => ({
-        name: i.productName,
-        quantity: i.quantity / 1000,
-      })),
-    };
-
-    await this.enqueuePrintJob(
-      event.branchId,
-      printerId,
-      DocumentType.Kitchen,
-      printDoc,
-      event.actorId || 'system',
-    );
-    await this.persistReceipt(order.id, order.orderNo, DocumentType.Kitchen, printerId, printDoc);
+    for (const g of groups.values()) {
+      const printDoc = {
+        title: g.documentType === DocumentType.Bar ? 'BAR FİŞİ' : 'MUTFAK FİŞİ',
+        orderNo: order.orderNo,
+        date: new Date().toISOString(),
+        items: g.items.map((i: { productName: string; quantity: number }) => ({
+          name: i.productName,
+          quantity: i.quantity / 1000,
+        })),
+      };
+      await this.enqueuePrintJob(
+        event.branchId,
+        g.printerId,
+        g.documentType,
+        printDoc,
+        event.actorId || 'system',
+      );
+      await this.persistReceipt(order.id, order.orderNo, g.documentType, g.printerId, printDoc);
+    }
   }
 
   // Basılan fişi kalıcı kaydeder (reprint + audit için). receiptNo: orderNo-<tip><sıra>.
