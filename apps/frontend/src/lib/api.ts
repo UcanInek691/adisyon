@@ -5,10 +5,15 @@ const REFRESH_KEY = 'ado.refresh';
 const USER_KEY = 'ado.user';
 
 export interface AuthUser {
-  userId: string;
+  id: string;
+  username: string;
   displayName?: string;
   role?: string;
-  permissions?: string[];
+  permissions: string[];
+}
+
+export function hasPerm(key: string): boolean {
+  return getUser()?.permissions?.includes(key) ?? false;
 }
 
 export function getAccess(): string | null {
@@ -95,20 +100,25 @@ export async function api<T = unknown>(
 interface LoginResult {
   accessToken: string;
   refreshToken: string;
-  user: AuthUser;
+  user: { id: string; username: string; displayName?: string; role?: string };
+  permissions: string[];
+}
+
+function sessionUser(r: LoginResult): AuthUser {
+  // permissions ust seviyeden gelir; kullanici nesnesine katilir.
+  return { ...r.user, permissions: r.permissions ?? [] };
 }
 
 export async function login(username: string, password: string): Promise<AuthUser> {
   const r = await api<LoginResult>('/auth/login', { method: 'POST', body: { username, password } });
-  setSession(r.accessToken, r.refreshToken, r.user);
-  return r.user;
+  const user = sessionUser(r);
+  setSession(r.accessToken, r.refreshToken, user);
+  return user;
 }
 
 export async function loginPin(username: string, pin: string): Promise<AuthUser> {
-  const r = await api<LoginResult>('/auth/login-pin', {
-    method: 'POST',
-    body: { username, pin },
-  });
-  setSession(r.accessToken, r.refreshToken, r.user);
-  return r.user;
+  const r = await api<LoginResult>('/auth/login-pin', { method: 'POST', body: { username, pin } });
+  const user = sessionUser(r);
+  setSession(r.accessToken, r.refreshToken, user);
+  return user;
 }

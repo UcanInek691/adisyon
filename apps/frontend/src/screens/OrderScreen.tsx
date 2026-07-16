@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, hasPerm } from '../lib/api';
 import { formatKurus, formatQty } from '../lib/format';
 import type { Category, Order, Product } from '../lib/types';
 import PaymentModal from './PaymentModal';
@@ -58,6 +58,8 @@ export default function OrderScreen() {
   const cats = categories.data ?? [];
   const cat = activeCat || cats[0]?.id || '';
   const catProducts = (products.data ?? []).filter((p) => p.categoryId === cat);
+  const canPay = hasPerm('payment.take');
+  const canVoid = hasPerm('order.cancel');
   const hasPending = (o?.items ?? []).some((i) => i.status === 'pending');
   const busy =
     addItem.isPending ||
@@ -131,13 +133,15 @@ export default function OrderScreen() {
                       <span className="text-xs text-slate-400">
                         {formatQty(it.quantity)} • gönderildi
                       </span>
-                      <button
-                        onClick={() => voidItem.mutate(it.id)}
-                        disabled={busy}
-                        className="ml-auto rounded-lg px-2 text-sm font-medium text-red-600"
-                      >
-                        İptal
-                      </button>
+                      {canVoid && (
+                        <button
+                          onClick={() => voidItem.mutate(it.id)}
+                          disabled={busy}
+                          className="ml-auto rounded-lg px-2 text-sm font-medium text-red-600"
+                        >
+                          İptal
+                        </button>
+                      )}
                     </>
                   )}
                 </div>
@@ -165,7 +169,7 @@ export default function OrderScreen() {
           >
             İndirim
           </button>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={`grid gap-2 ${canPay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <button
               onClick={() => sendKitchen.mutate()}
               disabled={busy || !hasPending}
@@ -173,13 +177,15 @@ export default function OrderScreen() {
             >
               Mutfağa Gönder
             </button>
-            <button
-              onClick={() => setPayOpen(true)}
-              disabled={busy || !o || o.grandTotal <= 0}
-              className="rounded-lg bg-green-600 py-3 font-semibold text-white disabled:opacity-40"
-            >
-              Öde
-            </button>
+            {canPay && (
+              <button
+                onClick={() => setPayOpen(true)}
+                disabled={busy || !o || o.grandTotal <= 0}
+                className="rounded-lg bg-green-600 py-3 font-semibold text-white disabled:opacity-40"
+              >
+                Öde
+              </button>
+            )}
           </div>
         </div>
       </aside>
