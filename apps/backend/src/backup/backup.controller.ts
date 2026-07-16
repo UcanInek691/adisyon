@@ -20,6 +20,12 @@ export class BackupController {
     return this.backupService.listBackups(user);
   }
 
+  @Post(':id/restore')
+  @RequirePermissions(Permission.BackupManage)
+  restore(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.backupService.restoreBackup(user, id);
+  }
+
   @Delete(':id')
   @RequirePermissions(Permission.BackupManage)
   remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {

@@ -1,5 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { newId } from '@ado/shared';
@@ -88,6 +88,59 @@ export class BackupService {
       }
       throw new Error(`Backup failed: ${err.message}`);
     }
+  }
+
+  /**
+   * Yedegi coz + butunluk dogrula + staging dosyasina yaz. Canli SQLite'i surec
+   * calisirken yerinde takas etmek kilit/bozulma riski tasidigindan ATOMIK TAKAS
+   * yapilmaz; denetci (Electron) yeniden baslatmada staging dosyasini devreye alir.
+   */
+  async restoreBackup(user: AuthUser, id: string) {
+    const backup = await this.prisma.backup.findFirst({
+      where: { id, branchId: user.branchId, deletedAt: null },
+    });
+    if (!backup) throw new NotFoundException('Yedek bulunamadı.');
+    if (!existsSync(backup.path)) {
+      throw new NotFoundException('Yedek dosyası diskte bulunamadı.');
+    }
+
+    const raw = readFileSync(backup.path);
+    // Butunluk: kayitli checksum ile karsilastir.
+    const checksum = createHash('sha256').update(raw).digest('hex');
+    if (backup.checksum && checksum !== backup.checksum) {
+      throw new BadRequestException({
+        code: 'BACKUP_CORRUPT',
+        message: 'Yedek bütünlük doğrulaması başarısız (checksum uyuşmuyor).',
+      });
+    }
+
+    // Format: IV(12) + AuthTag(16) + sifreli veri
+    const iv = raw.subarray(0, 12);
+    const authTag = raw.subarray(12, 28);
+    const encrypted = raw.subarray(28);
+    const decipher = createDecipheriv(ALGORITHM, this.getEncryptionKey(), iv);
+    decipher.setAuthTag(authTag);
+    let decrypted: Buffer;
+    try {
+      decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    } catch {
+      throw new BadRequestException({
+        code: 'BACKUP_DECRYPT_FAILED',
+        message: 'Yedek çözülemedi (şifre anahtarı veya dosya hatalı).',
+      });
+    }
+
+    const stagePath = join(this.backupDir, `restore_staging_${backup.id}.db`);
+    writeFileSync(stagePath, decrypted);
+    this.logger.warn(
+      `Backup ${backup.id} restore icin hazirlandi: ${stagePath}. Atomik takas yeniden baslatmada yapilir.`,
+    );
+    return {
+      staged: true,
+      stagePath,
+      message:
+        'Yedek çözüldü ve doğrulandı. Uygulanması için yeniden başlatma gerekir (atomik takas denetleyici tarafından yapılır).',
+    };
   }
 
   async listBackups(user: AuthUser) {
