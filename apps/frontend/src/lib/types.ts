@@ -33,6 +33,12 @@ export interface Order {
   items: OrderItem[];
 }
 
+export interface Payment {
+  id: string;
+  amount: number; // kurus (+/-; iade negatif)
+  method: string; // cash | card | transfer | qr | debt
+}
+
 export interface Category {
   id: string;
   name: string;

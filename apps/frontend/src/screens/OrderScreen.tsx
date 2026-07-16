@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatKurus, formatQty } from '../lib/format';
 import type { Category, Order, Product } from '../lib/types';
+import PaymentModal from './PaymentModal';
 
 export default function OrderScreen() {
   const { id = '' } = useParams();
@@ -11,6 +12,7 @@ export default function OrderScreen() {
   const qc = useQueryClient();
   const [activeCat, setActiveCat] = useState<string>('');
   const [error, setError] = useState('');
+  const [payOpen, setPayOpen] = useState(false);
 
   const order = useQuery({ queryKey: ['order', id], queryFn: () => api<Order>(`/orders/${id}`) });
   const categories = useQuery({
@@ -33,25 +35,12 @@ export default function OrderScreen() {
     onSuccess: refresh,
     onError: fail,
   });
-  const pay = useMutation({
-    mutationFn: (amount: number) =>
-      api(`/orders/${id}/payments`, {
-        method: 'POST',
-        body: { method: 'cash', amount, idempotencyKey: crypto.randomUUID() },
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['orders', 'open'] });
-      nav('/', { replace: true });
-    },
-    onError: fail,
-  });
-
   const o = order.data;
   const cats = categories.data ?? [];
   const cat = activeCat || cats[0]?.id || '';
   const catProducts = (products.data ?? []).filter((p) => p.categoryId === cat);
   const hasPending = (o?.items ?? []).some((i) => i.status === 'pending');
-  const busy = addItem.isPending || sendKitchen.isPending || pay.isPending;
+  const busy = addItem.isPending || sendKitchen.isPending;
 
   return (
     <div className="flex h-full flex-col bg-slate-100 md:flex-row">
@@ -99,11 +88,11 @@ export default function OrderScreen() {
               Mutfağa Gönder
             </button>
             <button
-              onClick={() => pay.mutate(o?.grandTotal ?? 0)}
+              onClick={() => setPayOpen(true)}
               disabled={busy || !o || o.grandTotal <= 0}
               className="rounded-lg bg-green-600 py-3 font-semibold text-white disabled:opacity-40"
             >
-              Nakit Öde
+              Öde
             </button>
           </div>
         </div>
@@ -138,6 +127,15 @@ export default function OrderScreen() {
           ))}
         </div>
       </main>
+
+      {payOpen && o && (
+        <PaymentModal
+          orderId={id}
+          grandTotal={o.grandTotal}
+          onClose={() => setPayOpen(false)}
+          onCompleted={() => nav('/', { replace: true })}
+        />
+      )}
     </div>
   );
 }
