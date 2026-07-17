@@ -6,6 +6,7 @@ import { formatKurus, formatQty } from '../lib/format';
 import type { Category, Order, Product } from '../lib/types';
 import PaymentModal from './PaymentModal';
 import DiscountModal from './DiscountModal';
+import TableTransferModal from './TableTransferModal';
 
 export default function OrderScreen() {
   const { id = '' } = useParams();
@@ -15,6 +16,7 @@ export default function OrderScreen() {
   const [error, setError] = useState('');
   const [payOpen, setPayOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
+  const [transfer, setTransfer] = useState<'move' | 'merge' | null>(null);
 
   const order = useQuery({ queryKey: ['order', id], queryFn: () => api<Order>(`/orders/${id}`) });
   const categories = useQuery({
@@ -88,6 +90,22 @@ export default function OrderScreen() {
             ← Masalar
           </button>
           <span className="font-semibold text-slate-700">Adisyon {o?.orderNo ?? ''}</span>
+          {o?.status === 'open' && o.tableId && (
+            <div className="ml-auto flex gap-2">
+              <button
+                onClick={() => setTransfer('move')}
+                className="rounded-lg bg-slate-200 px-3 py-1 text-sm font-medium"
+              >
+                Taşı
+              </button>
+              <button
+                onClick={() => setTransfer('merge')}
+                className="rounded-lg bg-slate-200 px-3 py-1 text-sm font-medium"
+              >
+                Birleştir
+              </button>
+            </div>
+          )}
         </header>
 
         <ul className="flex-1 overflow-auto p-2">
@@ -250,6 +268,18 @@ export default function OrderScreen() {
           orderId={id}
           discounts={o.discounts ?? []}
           onClose={() => setDiscountOpen(false)}
+        />
+      )}
+      {transfer && o && (
+        <TableTransferModal
+          orderId={id}
+          currentTableId={o.tableId}
+          mode={transfer}
+          onClose={() => setTransfer(null)}
+          onDone={() => {
+            setTransfer(null);
+            if (transfer === 'move') nav('/', { replace: true });
+          }}
         />
       )}
     </div>
