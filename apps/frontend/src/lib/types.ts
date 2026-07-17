@@ -69,6 +69,29 @@ export interface CashSession {
   difference?: number; // sayilan - beklenen
 }
 
+export interface DebtTransaction {
+  id: string;
+  type: string; // debt_add | payment
+  amount: number; // kurus (+borc, -tahsilat)
+  note?: string | null;
+  occurredAt: string;
+}
+
+export interface DebtAccount {
+  id: string;
+  balance: number; // kurus (guncel borc)
+  transactions?: DebtTransaction[];
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+  note?: string | null;
+  debtAccount?: DebtAccount | null;
+}
+
 export interface Category {
   id: string;
   name: string;

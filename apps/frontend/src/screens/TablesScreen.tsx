@@ -70,6 +70,14 @@ export default function TablesScreen() {
               Kasa
             </button>
           )}
+          {hasPerm('debt.manage') && (
+            <button
+              onClick={() => nav('/customers')}
+              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
+            >
+              Veresiye
+            </button>
+          )}
           {hasPerm('report.view') && (
             <button
               onClick={() => nav('/report')}
