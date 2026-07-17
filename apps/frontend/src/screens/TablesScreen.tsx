@@ -78,6 +78,14 @@ export default function TablesScreen() {
               Veresiye
             </button>
           )}
+          {hasPerm('product.manage') && (
+            <button
+              onClick={() => nav('/menu')}
+              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
+            >
+              Ürünler
+            </button>
+          )}
           {hasPerm('report.view') && (
             <button
               onClick={() => nav('/report')}

@@ -95,6 +95,7 @@ export interface Customer {
 export interface Category {
   id: string;
   name: string;
+  sortOrder?: number;
 }
 
 export interface Product {
@@ -102,4 +103,21 @@ export interface Product {
   name: string;
   categoryId: string;
   salePrice: number; // kurus
+  unitId?: string;
+  taxId?: string;
+  isActive?: boolean;
+  isFavorite?: boolean;
+}
+
+export interface Unit {
+  id: string;
+  name: string;
+  abbreviation?: string | null;
+}
+
+export interface Tax {
+  id: string;
+  name: string;
+  ratePermille: number; // binde: %10 -> 100
+  isDefault?: boolean;
 }

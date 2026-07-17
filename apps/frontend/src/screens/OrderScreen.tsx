@@ -25,7 +25,10 @@ export default function OrderScreen() {
     queryKey: ['categories'],
     queryFn: () => api<Category[]>('/categories'),
   });
-  const products = useQuery({ queryKey: ['products'], queryFn: () => api<Product[]>('/products') });
+  const products = useQuery({
+    queryKey: ['products', 'active'],
+    queryFn: () => api<Product[]>('/products?active=true'),
+  });
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['order', id] });
   const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'İşlem başarısız.');

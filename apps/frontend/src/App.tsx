@@ -6,6 +6,7 @@ import OrderScreen from './screens/OrderScreen';
 import ReportScreen from './screens/ReportScreen';
 import KasaScreen from './screens/KasaScreen';
 import VeresiyeScreen from './screens/VeresiyeScreen';
+import MenuScreen from './screens/MenuScreen';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return isAuthed() ? <>{children}</> : <Navigate to="/login" replace />;
@@ -52,6 +53,14 @@ export default function App() {
         element={
           <RequireAuth>
             <VeresiyeScreen />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/menu"
+        element={
+          <RequireAuth>
+            <MenuScreen />
           </RequireAuth>
         }
       />
