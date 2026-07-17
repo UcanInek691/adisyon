@@ -48,6 +48,27 @@ export interface Payment {
   method: string; // cash | card | transfer | qr | debt
 }
 
+export interface CashTransaction {
+  id: string;
+  type: string; // opening | sale | refund | payout | income | expense | adjustment | closing
+  amount: number; // kurus (+/-)
+  method: string;
+  note?: string | null;
+  createdAt: string;
+}
+
+export interface CashSession {
+  id: string;
+  openingFloat: number; // kurus
+  status: string; // open | closed
+  businessDay: string;
+  openedAt: string;
+  transactions: CashTransaction[];
+  countedAmount?: number; // kapanista
+  expectedAmount?: number;
+  difference?: number; // sayilan - beklenen
+}
+
 export interface Category {
   id: string;
   name: string;

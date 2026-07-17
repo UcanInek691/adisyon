@@ -62,6 +62,14 @@ export default function TablesScreen() {
         <h1 className="text-xl font-bold text-slate-800">Masalar</h1>
         <div className="flex items-center gap-3 text-sm text-slate-500">
           <span>{user?.displayName ?? user?.role ?? ''}</span>
+          {hasPerm('cash.manage') && (
+            <button
+              onClick={() => nav('/cash')}
+              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
+            >
+              Kasa
+            </button>
+          )}
           {hasPerm('report.view') && (
             <button
               onClick={() => nav('/report')}
