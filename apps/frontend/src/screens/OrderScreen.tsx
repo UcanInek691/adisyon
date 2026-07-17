@@ -7,6 +7,7 @@ import type { Category, Order, Product } from '../lib/types';
 import PaymentModal from './PaymentModal';
 import DiscountModal from './DiscountModal';
 import TableTransferModal from './TableTransferModal';
+import SplitModal from './SplitModal';
 
 export default function OrderScreen() {
   const { id = '' } = useParams();
@@ -17,6 +18,7 @@ export default function OrderScreen() {
   const [payOpen, setPayOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [transfer, setTransfer] = useState<'move' | 'merge' | null>(null);
+  const [splitOpen, setSplitOpen] = useState(false);
 
   const order = useQuery({ queryKey: ['order', id], queryFn: () => api<Order>(`/orders/${id}`) });
   const categories = useQuery({
@@ -104,6 +106,14 @@ export default function OrderScreen() {
               >
                 Birleştir
               </button>
+              {(o?.items ?? []).length >= 2 && (
+                <button
+                  onClick={() => setSplitOpen(true)}
+                  className="rounded-lg bg-slate-200 px-3 py-1 text-sm font-medium"
+                >
+                  Böl
+                </button>
+              )}
             </div>
           )}
         </header>
@@ -279,6 +289,17 @@ export default function OrderScreen() {
           onDone={() => {
             setTransfer(null);
             if (transfer === 'move') nav('/', { replace: true });
+          }}
+        />
+      )}
+      {splitOpen && o && (
+        <SplitModal
+          orderId={id}
+          items={o.items}
+          onClose={() => setSplitOpen(false)}
+          onDone={(createdOrderId) => {
+            setSplitOpen(false);
+            nav(`/orders/${createdOrderId}`, { replace: true });
           }}
         />
       )}
