@@ -3,6 +3,7 @@ export interface Hall {
   id: string;
   name: string;
   sortOrder?: number;
+  isActive?: boolean;
 }
 
 export interface Table {
@@ -11,6 +12,7 @@ export interface Table {
   name: string;
   status: string; // empty | occupied | ...
   seats?: number;
+  isActive?: boolean;
 }
 
 export interface OrderItem {

@@ -10,7 +10,10 @@ export default function TablesScreen() {
   const user = getUser();
 
   const halls = useQuery({ queryKey: ['halls'], queryFn: () => api<Hall[]>('/halls') });
-  const tables = useQuery({ queryKey: ['tables'], queryFn: () => api<Table[]>('/tables') });
+  const tables = useQuery({
+    queryKey: ['tables', 'active'],
+    queryFn: () => api<Table[]>('/tables?active=true'),
+  });
   const openOrders = useQuery({
     queryKey: ['orders', 'open'],
     queryFn: () => api<Order[]>('/orders?open=true'),
@@ -84,6 +87,14 @@ export default function TablesScreen() {
               className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
             >
               Ürünler
+            </button>
+          )}
+          {hasPerm('table.manage') && (
+            <button
+              onClick={() => nav('/tables-admin')}
+              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
+            >
+              Masa Yönetimi
             </button>
           )}
           {hasPerm('report.view') && (

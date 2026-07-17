@@ -22,7 +22,10 @@ export default function TableTransferModal({
   const qc = useQueryClient();
   const [error, setError] = useState('');
 
-  const tables = useQuery({ queryKey: ['tables'], queryFn: () => api<Table[]>('/tables') });
+  const tables = useQuery({
+    queryKey: ['tables', 'active'],
+    queryFn: () => api<Table[]>('/tables?active=true'),
+  });
   const open = useQuery({
     queryKey: ['orders', 'open'],
     queryFn: () => api<Order[]>('/orders?open=true'),
