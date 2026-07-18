@@ -53,6 +53,8 @@ Tümü **framework primitifleriyle** (elle yeniden icat yok), mevcut mimariyi bo
 | **Monitoring / Metrics panosu** | Tam metrik gözlemlenebilirliği ürün yokken erken | Frontend + Faz 2 phone-home; şimdilik hafif health + sayaç yeter |
 | **Time Machine** | Altyapı değil, **audit üzerine okuma/UI**; hash-zincirli audit veriyi zaten tutuyor | Frontend gelince timeline endpoint + ekran |
 | **Undo (dar kapsam)** | Genel undo tehlikeli; finansal kayıt asla geri alınmaz (ters-kayıt var) | Sadece commit-öncesi UI aksiyonları (sipariş iletmeden kalem silme) — sipariş UI'ında |
+| **Cloud yedekleme** | Yedekler zaten şifreli tek dosya (`.db.enc`); yükleme hedefi (S3/Drive) seçimi ürün kararı | MVP sonrası ilk adaylardan — yedek alma akışına "buluta yükle" adımı eklemek yeter |
+| **İnternet üzerinden erişim** | Veri tek makinede; güvenli uzak erişim Faz 2 offline/sync motoruna dayanır (`sync_state`/`device_id` alanları hazır) | Faz 2 sync motoru + barındırma kararı |
 
 ---
 
