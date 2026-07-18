@@ -123,3 +123,24 @@ export interface Tax {
   ratePermille: number; // binde: %10 -> 100
   isDefault?: boolean;
 }
+
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+}
+
+export interface Expense {
+  id: string;
+  categoryId: string;
+  amount: number; // kurus
+  description?: string | null;
+  spentAt: string;
+}
+
+export interface Income {
+  id: string;
+  category?: string | null;
+  amount: number; // kurus
+  description?: string | null;
+  receivedAt: string;
+}
