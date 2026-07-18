@@ -14,13 +14,16 @@ export default function TablesScreen() {
     queryKey: ['tables', 'active'],
     queryFn: () => api<Table[]>('/tables?active=true'),
   });
+  // ponytail: canli masa durumu icin LAN'da polling yeter; WebSocket ancak bu yetersiz kalirsa.
   const openOrders = useQuery({
     queryKey: ['orders', 'open'],
     queryFn: () => api<Order[]>('/orders?open=true'),
+    refetchInterval: 5000,
   });
   const heldOrders = useQuery({
     queryKey: ['orders', 'held'],
     queryFn: () => api<Order[]>('/orders?status=held'),
+    refetchInterval: 5000,
   });
 
   const openByTable = new Map<string, Order>();
