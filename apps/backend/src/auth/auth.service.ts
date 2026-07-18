@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
 import { newId, SystemRole } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,7 +6,7 @@ import { AppConfigService } from '../config/app-config.service';
 import { parseDurationMs } from '../common/util/duration';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { TokenService } from './token.service';
-import type { LoginDto, LoginPinDto, RefreshDto } from './dto/auth.schemas';
+import type { LoginDto, LoginPinDto, RefreshDto, SetupDto } from './dto/auth.schemas';
 
 /** Istek ust verisi (oturum kaydi icin). */
 export interface RequestMeta {
@@ -41,6 +41,69 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly config: AppConfigService,
   ) {}
+
+  // --- Ilk kurulum: hic kullanici yokken owner (+opsiyonel garson) olustur ---
+  async setupStatus(): Promise<{ required: boolean }> {
+    const count = await this.prisma.user.count({ where: { deletedAt: null } });
+    return { required: count === 0 };
+  }
+
+  async setup(dto: SetupDto): Promise<{ ok: true }> {
+    const branch = await this.prisma.branch.findFirst({
+      where: { isDefault: true, deletedAt: null },
+    });
+    const ownerRole = await this.prisma.role.findFirst({
+      where: { name: SystemRole.Owner, isSystem: true, deletedAt: null },
+    });
+    const waiterRole = await this.prisma.role.findFirst({
+      where: { name: SystemRole.Waiter, isSystem: true, deletedAt: null },
+    });
+    if (!branch || !ownerRole || !waiterRole) {
+      throw new ForbiddenException({
+        code: 'SETUP_NOT_READY',
+        message: 'Kurulum verisi eksik (varsayilan sube/rol bulunamadi).',
+      });
+    }
+
+    const ownerHash = await argonHash(dto.ownerPassword);
+    const waiterHash = dto.waiterPin ? await argonHash(dto.waiterPin) : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      // Yaris korumasi: transaction icinde tekrar kontrol et.
+      const count = await tx.user.count({ where: { deletedAt: null } });
+      if (count > 0) {
+        throw new ForbiddenException({
+          code: 'SETUP_ALREADY_DONE',
+          message: 'Kurulum zaten yapilmis.',
+        });
+      }
+      await tx.user.create({
+        data: {
+          id: newId(),
+          branchId: branch.id,
+          username: dto.ownerUsername,
+          displayName: dto.ownerDisplayName ?? 'Yonetici',
+          passwordHash: ownerHash,
+          roleId: ownerRole.id,
+        },
+      });
+      if (waiterHash) {
+        await tx.user.create({
+          data: {
+            id: newId(),
+            branchId: branch.id,
+            username: dto.waiterUsername ?? 'garson',
+            displayName: 'Garson',
+            pinHash: waiterHash,
+            roleId: waiterRole.id,
+          },
+        });
+      }
+    });
+
+    this.logger.log(`Ilk kurulum tamamlandi: owner=${dto.ownerUsername}`);
+    return { ok: true };
+  }
 
   // --- Owner: kullanici adi + sifre ------------------------------------------
   async login(dto: LoginDto, meta: RequestMeta): Promise<AuthResult> {

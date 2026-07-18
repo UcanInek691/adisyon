@@ -20,3 +20,13 @@ export const refreshSchema = z.object({
   refreshToken: z.string().min(1),
 });
 export type RefreshDto = z.infer<typeof refreshSchema>;
+
+/** Ilk kurulum: sistemde hic kullanici yokken owner (+opsiyonel garson) olustur. */
+export const setupSchema = z.object({
+  ownerUsername: z.string().min(3),
+  ownerPassword: z.string().min(6),
+  ownerDisplayName: z.string().min(1).optional(),
+  waiterUsername: z.string().min(3).optional(),
+  waiterPin: z.string().min(3).optional(),
+});
+export type SetupDto = z.infer<typeof setupSchema>;

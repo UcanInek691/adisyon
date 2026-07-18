@@ -40,11 +40,15 @@ cpSync(join(root, 'apps', 'frontend', 'dist'), join(bundle, 'frontend', 'dist'),
   recursive: true,
 });
 
-// 5) Sablon DB: bos sema (migrate deploy) + seed. Ilk acilista userData'ya kopyalanir.
-// ponytail: seed kullanici/sifreleri build makinesinin .env'inden gelir; ilk-kurulum
-// sihirbazi (sifre belirleme) urunlesme isi, MVP sonrasi.
+// 5) Sablon DB: bos sema (migrate deploy) + KULLANICISIZ seed (rol/izin/sube).
+// Sifre env'leri bilerek bosaltilir -> ilk acilista uygulama kurulum sihirbazini gosterir.
 const DATABASE_URL = 'file:' + join(bundle, 'template.db').replaceAll('\\', '/');
 run('pnpm exec prisma migrate deploy --schema prisma/schema', { DATABASE_URL });
-run('pnpm --filter @ado/backend seed', { DATABASE_URL });
+// Bos string: dotenv mevcut degiskeni ezmez, env semasi ''=yok sayar -> kullanici olusmaz.
+run('pnpm --filter @ado/backend seed', {
+  DATABASE_URL,
+  SEED_OWNER_PASSWORD: '',
+  SEED_WAITER_PIN: '',
+});
 
 console.log('\nbundle hazir:', bundle);
