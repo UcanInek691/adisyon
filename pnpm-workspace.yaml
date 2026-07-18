@@ -5,7 +5,9 @@ packages:
 # Prisma'nin engine indiren postinstall scriptine izin ver (guvenlik allowlist).
 allowBuilds:
   '@nestjs/core': true
+  electron: true
   '@prisma/client': true
   '@prisma/engines': true
   esbuild: true
   prisma: true
+  electron-winstaller: false

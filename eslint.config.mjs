@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/dist/**',
       '**/build/**',
       '**/node_modules/**',
+      'apps/desktop/bundle/**',
       '**/.prisma/**',
       '**/generated/**',
       'packages/shared/dist/**',
