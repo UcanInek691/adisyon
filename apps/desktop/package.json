@@ -5,9 +5,44 @@
   "description": "Adisyon/POS masaüstü kabuğu (Electron)",
   "main": "main.js",
   "scripts": {
-    "dev": "electron ."
+    "dev": "electron .",
+    "dist": "node build-bundle.mjs && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.ado.pos",
+    "npmRebuild": false,
+    "productName": "Adisyon POS",
+    "files": [
+      "main.js"
+    ],
+    "extraResources": [
+      {
+        "from": "bundle/backend",
+        "to": "backend"
+      },
+      {
+        "from": "bundle/backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "bundle/frontend",
+        "to": "frontend"
+      },
+      {
+        "from": "bundle/template.db",
+        "to": "template.db"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "runAfterFinish": true
+    }
   },
   "devDependencies": {
-    "electron": "^43.1.1"
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
   }
 }

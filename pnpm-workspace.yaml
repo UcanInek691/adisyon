@@ -10,3 +10,4 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   prisma: true
+  electron-winstaller: false
