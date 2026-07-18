@@ -20,7 +20,12 @@ export default function OrderScreen() {
   const [transfer, setTransfer] = useState<'move' | 'merge' | null>(null);
   const [splitOpen, setSplitOpen] = useState(false);
 
-  const order = useQuery({ queryKey: ['order', id], queryFn: () => api<Order>(`/orders/${id}`) });
+  const order = useQuery({
+    queryKey: ['order', id],
+    queryFn: () => api<Order>(`/orders/${id}`),
+    // ponytail: canli gorunum icin LAN'da polling yeter; WebSocket ancak bu yetersiz kalirsa.
+    refetchInterval: 5000,
+  });
   const categories = useQuery({
     queryKey: ['categories'],
     queryFn: () => api<Category[]>('/categories'),
