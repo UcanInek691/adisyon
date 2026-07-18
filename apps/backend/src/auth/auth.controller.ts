@@ -7,9 +7,11 @@ import {
   loginSchema,
   loginPinSchema,
   refreshSchema,
+  setupSchema,
   type LoginDto,
   type LoginPinDto,
   type RefreshDto,
+  type SetupDto,
 } from './dto/auth.schemas';
 import { AuthService, type RequestMeta } from './auth.service';
 
@@ -24,6 +26,18 @@ function metaOf(req: Request): RequestMeta {
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
+
+  @Public()
+  @Get('setup-status')
+  setupStatus(): Promise<unknown> {
+    return this.auth.setupStatus();
+  }
+
+  @Public()
+  @Post('setup')
+  setup(@Body(new ZodValidationPipe(setupSchema)) dto: SetupDto): Promise<unknown> {
+    return this.auth.setup(dto);
+  }
 
   @Public()
   @Post('login')

@@ -24,11 +24,15 @@ export const envSchema = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 
   SEED_OWNER_USERNAME: z.string().default('owner'),
-  SEED_OWNER_PASSWORD: z.string().min(6).optional(),
+  // Bos string = yok sayilir (paketleme kullanicisiz sablon DB icin '' gecer).
+  SEED_OWNER_PASSWORD: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().min(6).optional(),
+  ),
   SEED_OWNER_DISPLAY_NAME: z.string().default('Yonetici'),
   SEED_WAITER_USERNAME: z.string().default('garson'),
   SEED_WAITER_DISPLAY_NAME: z.string().default('Garson'),
-  SEED_WAITER_PIN: z.string().min(3).optional(),
+  SEED_WAITER_PIN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(3).optional()),
 });
 
 export type Env = z.infer<typeof envSchema>;
