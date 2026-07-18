@@ -144,3 +144,16 @@ export interface Income {
   description?: string | null;
   receivedAt: string;
 }
+
+export interface AppSetting {
+  key: string;
+  value: unknown;
+  updatedAt: string;
+}
+
+export interface Backup {
+  id: string;
+  type: string; // auto | manual | pre_update
+  sizeBytes: number;
+  createdAt: string;
+}

@@ -9,6 +9,7 @@ import VeresiyeScreen from './screens/VeresiyeScreen';
 import MenuScreen from './screens/MenuScreen';
 import MasaScreen from './screens/MasaScreen';
 import FinansScreen from './screens/FinansScreen';
+import AyarlarScreen from './screens/AyarlarScreen';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return isAuthed() ? <>{children}</> : <Navigate to="/login" replace />;
@@ -79,6 +80,14 @@ export default function App() {
         element={
           <RequireAuth>
             <FinansScreen />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <AyarlarScreen />
           </RequireAuth>
         }
       />
