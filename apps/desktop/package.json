@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Adisyon/POS masaüstü kabuğu (Electron)",
-  "main": "main.js",
+  "main": "main.mjs",
   "scripts": {
     "dev": "electron .",
     "dist": "node build-bundle.mjs && electron-builder --win"
@@ -13,7 +13,7 @@
     "npmRebuild": false,
     "productName": "Adisyon POS",
     "files": [
-      "main.js"
+      "main.mjs"
     ],
     "extraResources": [
       {

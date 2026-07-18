@@ -1,10 +1,10 @@
 // Electron ince kabuk: backend calismiyorsa cocuk surec olarak baslatir,
 // saglik kontrolu gecince pencereyi acar. UI tamamen backend'in sundugu web.
-const { app, BrowserWindow, dialog } = require('electron');
-const { spawn } = require('node:child_process');
-const { join } = require('node:path');
-const { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
-const { randomBytes } = require('node:crypto');
+import { app, BrowserWindow, dialog } from 'electron';
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 
 const PORT = process.env.API_PORT || '3001';
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -46,7 +46,7 @@ function packagedEnv() {
 function startBackend() {
   const base = app.isPackaged
     ? join(process.resourcesPath, 'backend')
-    : join(__dirname, '..', 'backend');
+    : join(import.meta.dirname, '..', 'backend');
   // ELECTRON_RUN_AS_NODE: electron.exe'yi duz node olarak kullan (sistemde node gerekmez).
   backend = spawn(process.execPath, [join(base, 'dist', 'main.js')], {
     env: {
