@@ -53,7 +53,7 @@ Tümü **framework primitifleriyle** (elle yeniden icat yok), mevcut mimariyi bo
 | **Monitoring / Metrics panosu** | Tam metrik gözlemlenebilirliği ürün yokken erken | Frontend + Faz 2 phone-home; şimdilik hafif health + sayaç yeter |
 | **Time Machine** | Altyapı değil, **audit üzerine okuma/UI**; hash-zincirli audit veriyi zaten tutuyor | Frontend gelince timeline endpoint + ekran |
 | **Undo (dar kapsam)** | Genel undo tehlikeli; finansal kayıt asla geri alınmaz (ters-kayıt var) | Sadece commit-öncesi UI aksiyonları (sipariş iletmeden kalem silme) — sipariş UI'ında |
-| **Cloud yedekleme** | Yedekler zaten şifreli tek dosya (`.db.enc`); yükleme hedefi (S3/Drive) seçimi ürün kararı | MVP sonrası ilk adaylardan — yedek alma akışına "buluta yükle" adımı eklemek yeter |
+| **Cloud yedekleme** | ✅ **2026-07-19 tamamlandı** — şifreli yedek, kullanıcının seçtiği senkron klasörüne kopyalanıyor (`backup.cloudDir`, isteğe bağlı); buluta yüklemeyi sağlayıcının masaüstü istemcisi (OneDrive/Drive/Dropbox) yapar. Günlük otomatik yedek 06:00 (`backup.autoDaily`). Doğrudan S3/Drive API'si: merkezi sunucu senaryosu doğarsa |
 | **İnternet üzerinden erişim** | Veri tek makinede; güvenli uzak erişim Faz 2 offline/sync motoruna dayanır (`sync_state`/`device_id` alanları hazır) | Faz 2 sync motoru + barındırma kararı |
 
 ---
@@ -70,5 +70,5 @@ Tümü **framework primitifleriyle** (elle yeniden icat yok), mevcut mimariyi bo
 
 | Boşluk | Neden önemli | Plan |
 |--------|--------------|------|
-| **Test / CI** | "Yıllarca sürecek ticari ürün" için bu 14 sistemin çoğundan büyük risk. Şu an test yok. | Kritik modüllere (para, sipariş, sync) risk-tabanlı test + CI kapısı — sipariş modülüyle başlar (`CONVENTIONS.md` §7) |
+| **Test / CI** | ✅ **Tamamlandı** — birim self-check (payments/orders/reports calc) + e2e smoke (30 kontrol) + CI kapısı | Yeni kritik modül geldikçe smoke'a kontrol eklenir |
 | **Hata izleme / telemetri** | Müşteri PC'sinde çalışan üründe sahadaki çökmeleri görmek şart | Faz 2 phone-home; şimdilik yapısal log (pino) + crash recovery |
