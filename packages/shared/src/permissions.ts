@@ -28,6 +28,7 @@ export const Permission = {
   ReportView: 'report.view',
   AuditView: 'audit.view',
   // Sistem
+  UserManage: 'user.manage',
   SettingsManage: 'settings.manage',
   PrinterManage: 'printer.manage',
   LicenseManage: 'license.manage',
