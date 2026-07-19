@@ -144,6 +144,32 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   const { status: udel } = await call('DELETE', `/users/${nu.id}`);
   assert(udel < 400, `USER sil (${udel})`);
 
+  // --- SSE: canli sinyal akisi (200 + order.* olayi + tokensiz 401) ---
+  const sse = await fetch(`${BASE}/events/stream?token=${encodeURIComponent(token)}`, {
+    headers: { Accept: 'text/event-stream' },
+  });
+  assert(sse.status === 200, `SSE baglanti 200 (${sse.status})`);
+  assert((sse.headers.get('content-type') || '').includes('text/event-stream'), 'SSE content-type');
+  const reader = sse.body.getReader();
+  const firstEvent = (async () => {
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return buf;
+      buf += dec.decode(value, { stream: true });
+      if (buf.includes('order.')) return buf;
+    }
+  })();
+  const t5 = await mk('M5');
+  await call('POST', '/orders', { tableId: t5.id }); // order.* olayi tetikler
+  const msg = await Promise.race([firstEvent, new Promise((r) => setTimeout(() => r(''), 5000))]);
+  assert(msg.includes('order.'), `SSE order.* olayi alindi (${JSON.stringify(msg.slice(0, 80))})`);
+  await reader.cancel().catch(() => {});
+  const noTok = await fetch(`${BASE}/events/stream`);
+  noTok.body?.cancel?.();
+  assert(noTok.status === 401, `SSE tokensiz 401 (${noTok.status})`);
+
   console.log(`\nE2E SONUC: ${ok.length} gecti, ${bad.length} kaldi`);
   process.exit(bad.length ? 1 : 0);
 })().catch((e) => {
