@@ -6,6 +6,10 @@ Sürümleme: [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **İstemci-offline sync API (2026-07-20):** `POST /sync/mutations` (toplu idempotent replay,
+  ProcessedClientOp defteri, akıllı birleştirme), `GET /sync/snapshot` (tek istekte aktif durum),
+  `GET /sync/health` (token'sız heartbeat), `/offline-reviews` Owner onay kuyruğu
+  (yeni_adisyon / yeniden_aç / reddet). Bkz. `OFFLINE_DESIGN.md` §7-9.
 - **Cloud yedek (2026-07-19):** şifreli yedeğin isteğe bağlı senkron klasörüne kopyası
   (`backup.cloudDir`) + günlük otomatik yedek 06:00 (`backup.autoDaily`, kapatılabilir).
   Yedekler asla otomatik silinmez.

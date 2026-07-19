@@ -63,6 +63,6 @@
 |------|-------|
 | **Frontend** (Electron + LAN tarayıcı) | ✅ MVP: 14 ekran + Electron/NSIS paketi (PR #5) + ilk-kurulum sihirbazı (PR #6) + kullanıcı yönetimi (PR #8) |
 | **Canlı masa/adisyon** | ✅ SSE ile olay tabanlı tazeleme + 30 sn emniyet polling'i (PR #9). socket.io "belki" rafta: cihaza hedefli komut itme ihtiyacı doğarsa |
-| **Offline / Sync motoru** | ❌ Faz 2 (model alanları hazır) |
+| **Offline / Sync motoru** | 🟡 **Sunucu tarafı TAM:** `/sync/mutations` (idempotent replay + akıllı birleştirme) + `/sync/snapshot` + `/sync/health` + `/offline-reviews` Owner onay kuyruğu. Kalan: tablet PWA (IndexedDB outbox + Sync Engine + rozetler) ve Owner review ekranı |
 | Lisans yönetimi / Otomatik güncelleme / Kod imzalama | 🟡/❌ İleride |
 | **Test / CI** | ✅ Birim self-check (payments/orders/reports calc) + e2e smoke (30 kontrol) + CI kapısı |
