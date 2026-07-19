@@ -122,6 +122,28 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   assert(stmt.status === 200 && stmt.text.includes('Bakiye'), `STATEMENT CSV 200 (${stmt.status})`);
   assert(stmt.text.includes('50.00'), 'STATEMENT 5000kr -> 50.00 TL');
 
+  // --- USERS: olustur/listele/pasiflestir/sil + kendi hesabini silme korumasi ---
+  const uname = 'garson' + Date.now();
+  const { data: nu } = await call('POST', '/users', {
+    username: uname,
+    displayName: 'Test Garson',
+    role: 'waiter',
+    pin: '1234',
+  });
+  assert(!!nu.id, 'USER create (waiter)');
+  const { data: ulist } = await call('GET', '/users');
+  assert(
+    ulist.some((u) => u.id === nu.id),
+    'USER listede',
+  );
+  const { status: deact } = await call('PATCH', `/users/${nu.id}`, { isActive: false });
+  assert(deact < 400, `USER pasiflestir (${deact})`);
+  const self = ulist.find((u) => u.username === 'owner');
+  const { status: selfDel } = await call('DELETE', `/users/${self.id}`);
+  assert(selfDel === 403, `USER self-delete 403 (${selfDel})`);
+  const { status: udel } = await call('DELETE', `/users/${nu.id}`);
+  assert(udel < 400, `USER sil (${udel})`);
+
   console.log(`\nE2E SONUC: ${ok.length} gecti, ${bad.length} kaldi`);
   process.exit(bad.length ? 1 : 0);
 })().catch((e) => {

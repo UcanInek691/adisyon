@@ -29,6 +29,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { FinanceModule } from './finance/finance.module';
 import { SettingsModule } from './settings/settings.module';
 import { DevicesModule } from './devices/devices.module';
+import { UsersModule } from './users/users.module';
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -74,6 +75,7 @@ const isProd = process.env.NODE_ENV === 'production';
     FinanceModule,
     SettingsModule,
     DevicesModule,
+    UsersModule,
   ],
   providers: [
     // Sira onemli: once kimlik (req.user'i doldurur), sonra izin denetimi.
