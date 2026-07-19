@@ -1,6 +1,15 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  statSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { newId } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,7 +34,39 @@ export class BackupService {
     return createHash('sha256').update(rawKey).digest();
   }
 
-  async createBackup(user: AuthUser, type: 'auto' | 'manual' | 'pre_update'): Promise<any> {
+  /** Branch bazli ayari oku (JSON deger); yoksa null. */
+  private async getSetting(branchId: string, key: string): Promise<unknown> {
+    const row = await this.prisma.applicationSetting.findUnique({
+      where: { branchId_key: { branchId, key } },
+    });
+    if (!row || row.deletedAt) return null;
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Gunluk otomatik yedek (06:00, gun donusuyle uyumlu). `backup.autoDaily=false`
+   * ayariyla kapatilir. Yedekler ASLA otomatik silinmez (kullanici karari).
+   */
+  @Cron('0 6 * * *')
+  async dailyAutoBackup(): Promise<void> {
+    const branch = await this.prisma.branch.findFirst({ where: { deletedAt: null } });
+    if (!branch) return;
+    if ((await this.getSetting(branch.id, 'backup.autoDaily')) === false) return;
+    try {
+      await this.createBackup({ branchId: branch.id }, 'auto');
+    } catch (err) {
+      this.logger.error('Otomatik gunluk yedek basarisiz', err);
+    }
+  }
+
+  async createBackup(
+    actor: { branchId: string; userId?: string },
+    type: 'auto' | 'manual' | 'pre_update',
+  ): Promise<any> {
     const backupId = newId();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const tempFile = join(this.backupDir, `temp_${backupId}.db`);
@@ -64,18 +105,33 @@ export class BackupService {
       const backup = await this.prisma.backup.create({
         data: {
           id: backupId,
-          branchId: user.branchId,
+          branchId: actor.branchId,
           path: finalPath,
           sizeBytes,
           type,
           encrypted: true,
           checksum,
-          createdBy: user.userId,
+          createdBy: actor.userId ?? null,
         },
       });
 
       this.logger.log(`Backup completed successfully: ${finalFileName} (${sizeBytes} bytes)`);
-      return backup;
+
+      // 5. Istege bagli bulut kopyasi: `backup.cloudDir` ayari doluysa sifreli dosyayi
+      // senkron klasorune (OneDrive/Drive/Dropbox) kopyala. Buluta tasima isini
+      // saglayicinin masaustu istemcisi yapar. Kopya hatasi yedegi DUSURMEZ.
+      let cloudCopied = false;
+      const cloudDir = await this.getSetting(actor.branchId, 'backup.cloudDir');
+      if (typeof cloudDir === 'string' && cloudDir.trim()) {
+        try {
+          mkdirSync(cloudDir.trim(), { recursive: true });
+          copyFileSync(finalPath, join(cloudDir.trim(), finalFileName));
+          cloudCopied = true;
+        } catch (err) {
+          this.logger.error(`Bulut klasorune kopyalanamadi: ${cloudDir}`, err);
+        }
+      }
+      return { ...backup, cloudCopied };
     } catch (err: any) {
       this.logger.error('Failed to create database backup', err);
       // Clean up temp file if it exists

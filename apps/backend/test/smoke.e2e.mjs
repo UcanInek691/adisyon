@@ -1,6 +1,10 @@
 // E2E smoke — calisan sunucuya karsi kritik para yollari.
 // Kullanim: backend'i ayaga kaldir (npm run dev) + seed, sonra: node test/smoke.e2e.mjs
 // Kapsam: merge, split, payment idempotency, reverse (iade), end-of-day, statement CSV.
+import { readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 const PORT = process.env.API_PORT || process.env.PORT || 3001;
 const BASE = `http://127.0.0.1:${PORT}/api/v1`;
 let token = '';
@@ -143,6 +147,16 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   assert(selfDel === 403, `USER self-delete 403 (${selfDel})`);
   const { status: udel } = await call('DELETE', `/users/${nu.id}`);
   assert(udel < 400, `USER sil (${udel})`);
+
+  // --- CLOUD YEDEK: cloudDir doluysa sifreli dosya kopyalanir, bossa kopya yok ---
+  const cloudDir = join(tmpdir(), 'ado-cloud-' + Date.now());
+  await call('PUT', '/settings/' + encodeURIComponent('backup.cloudDir'), { value: cloudDir });
+  const { data: bk } = await call('POST', '/backups');
+  assert(bk.cloudCopied === true, `cloud yedek kopyalandi (${bk.cloudCopied})`);
+  assert(readdirSync(cloudDir).length === 1, 'cloud klasorunde 1 dosya var');
+  await call('PUT', '/settings/' + encodeURIComponent('backup.cloudDir'), { value: '' });
+  const { data: bk2 } = await call('POST', '/backups');
+  assert(bk2.cloudCopied === false, `cloudDir bos -> kopya yok (${bk2.cloudCopied})`);
 
   // --- SSE: canli sinyal akisi (200 + order.* olayi + tokensiz 401) ---
   const sse = await fetch(`${BASE}/events/stream?token=${encodeURIComponent(token)}`, {

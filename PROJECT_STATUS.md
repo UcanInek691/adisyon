@@ -4,7 +4,7 @@
 > (`SYSTEM_ANALYSIS.md §5`, `API_DESIGN.md`, `DATABASE_DESIGN.md`, `ROADMAP.md`)
 > karşı **ne yapıldı / kısmi / eksik** durumunu tek yerde tutar.
 
-**Oluşturuldu:** 2026-07-16 · **Legend:** ✅ tam · 🟡 kısmi · ❌ yok
+**Oluşturuldu:** 2026-07-16 · **Güncellendi:** 2026-07-19 · **Legend:** ✅ tam · 🟡 kısmi · ❌ yok
 
 ---
 
@@ -42,7 +42,7 @@
 | Veresiye ekstre | ✅ | **CSV indir** (`/customers/:id/statement.csv`, yürüyen bakiye). PDF render sunum/frontend katmanı |
 | Stok (inventory) | 🟡 | Opt-in, varsayılan kapalı. Descope adayı |
 | Denetim (audit) | ✅ | — |
-| Yedek (backup) | ✅ | Al/listele/sil + **restore** (çöz+doğrula+stage; atomik takas restart'ta) |
+| Yedek (backup) | ✅ | Al/listele/sil + **restore** (çöz+doğrula+stage; atomik takas restart'ta) + **günlük otomatik yedek (06:00)** + **isteğe bağlı bulut kopyası** (senkron klasörüne; OneDrive/Drive sağlayıcı bağımsız). Yedekler asla otomatik silinmez |
 | Health / Worker / Scheduler / Feature-flags | ✅ | Bug'lar düzeltildi |
 
 ---
@@ -61,8 +61,8 @@
 
 | Alan | Durum |
 |------|-------|
-| **Frontend** (Electron + LAN tarayıcı) | ❌ Sıfırdan, kendi başına proje |
-| **WebSocket — canlı masa** | ❌ Faz 2 |
+| **Frontend** (Electron + LAN tarayıcı) | ✅ MVP: 14 ekran + Electron/NSIS paketi (PR #5) + ilk-kurulum sihirbazı (PR #6) + kullanıcı yönetimi (PR #8) |
+| **Canlı masa/adisyon** | ✅ SSE ile olay tabanlı tazeleme + 30 sn emniyet polling'i (PR #9). socket.io "belki" rafta: cihaza hedefli komut itme ihtiyacı doğarsa |
 | **Offline / Sync motoru** | ❌ Faz 2 (model alanları hazır) |
-| Lisans yönetimi / Otomatik güncelleme | 🟡/❌ İleride |
-| **Test / CI** | ❌ Proje geneli test yok (yalnız `payments.calc`) |
+| Lisans yönetimi / Otomatik güncelleme / Kod imzalama | 🟡/❌ İleride |
+| **Test / CI** | ✅ Birim self-check (payments/orders/reports calc) + e2e smoke (30 kontrol) + CI kapısı |

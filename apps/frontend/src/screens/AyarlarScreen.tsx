@@ -172,10 +172,33 @@ function BackupCard({
   });
   const refresh = () => qc.invalidateQueries({ queryKey: ['backups'] });
 
-  const create = useMutation({
-    mutationFn: () => api('/backups', { method: 'POST' }),
+  // Bulut klasoru + otomatik yedek ayarlari (settings.manage gerektirir).
+  const canSettings = hasPerm('settings.manage');
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: () => api<AppSetting[]>('/settings'),
+    enabled: canSettings,
+  });
+  const cloudDirSaved =
+    (settings.data?.find((s) => s.key === 'backup.cloudDir')?.value as string) || '';
+  const autoDaily = settings.data?.find((s) => s.key === 'backup.autoDaily')?.value !== false;
+  const [cloudDraft, setCloudDraft] = useState<string | null>(null);
+  const saveSetting = useMutation({
+    mutationFn: ({ key, value }: { key: string; value: unknown }) =>
+      api(`/settings/${encodeURIComponent(key)}`, { method: 'PUT', body: { value } }),
     onSuccess: () => {
-      onInfo('Yedek alındı.');
+      setCloudDraft(null);
+      qc.invalidateQueries({ queryKey: ['settings'] });
+    },
+    onError,
+  });
+
+  const create = useMutation({
+    mutationFn: () => api<{ cloudCopied?: boolean }>('/backups', { method: 'POST' }),
+    onSuccess: (r) => {
+      if (cloudDirSaved && !r.cloudCopied)
+        onError(new ApiError(0, 'CLOUD_COPY', 'Yedek alındı ama bulut klasörüne kopyalanamadı.'));
+      else onInfo(r.cloudCopied ? 'Yedek alındı ve bulut klasörüne kopyalandı.' : 'Yedek alındı.');
       refresh();
     },
     onError,
@@ -204,6 +227,43 @@ function BackupCard({
           {create.isPending ? 'Alınıyor…' : 'Yedek Al'}
         </button>
       </div>
+      {canSettings && (
+        <div className="mb-3 space-y-2 rounded-lg bg-slate-50 p-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span className="w-28 shrink-0 text-slate-600">Bulut klasörü</span>
+            <input
+              value={cloudDraft ?? cloudDirSaved}
+              onChange={(e) => setCloudDraft(e.target.value)}
+              placeholder={'örn. C:\\Users\\ali\\OneDrive\\Yedek (boş = kapalı)'}
+              className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1"
+            />
+            <button
+              onClick={() =>
+                saveSetting.mutate({ key: 'backup.cloudDir', value: (cloudDraft ?? '').trim() })
+              }
+              disabled={saveSetting.isPending || cloudDraft === null}
+              className="rounded-lg bg-slate-700 px-2 py-1 font-medium text-white disabled:opacity-40"
+            >
+              Kaydet
+            </button>
+          </div>
+          <label className="flex items-center gap-2 text-slate-600">
+            <input
+              type="checkbox"
+              checked={autoDaily}
+              onChange={(e) =>
+                saveSetting.mutate({ key: 'backup.autoDaily', value: e.target.checked })
+              }
+            />
+            Günlük otomatik yedek (06:00)
+          </label>
+          <p className="text-xs text-slate-400">
+            Şifreli yedek dosyası bu klasöre de kopyalanır; OneDrive/Google Drive gibi bir senkron
+            klasörü seçerseniz buluta yüklemeyi sağlayıcının uygulaması yapar. Yedekler asla
+            otomatik silinmez.
+          </p>
+        </div>
+      )}
       {backups.isLoading && <p className="text-sm text-slate-400">Yükleniyor…</p>}
       {backups.data?.length === 0 && <p className="text-sm text-slate-400">Henüz yedek yok.</p>}
       <ul className="divide-y">
