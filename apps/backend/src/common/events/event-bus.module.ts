@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventBusService } from './event-bus.service';
 import { EventLoggerSubscriber } from './event-logger.subscriber';
+import { EventsController } from './events.controller';
 
 /**
  * Global domain event altyapisi. EventBusService her modulde enjekte edilebilir;
@@ -21,6 +22,7 @@ import { EventLoggerSubscriber } from './event-logger.subscriber';
       ignoreErrors: false,
     }),
   ],
+  controllers: [EventsController],
   providers: [EventBusService, EventLoggerSubscriber],
   exports: [EventBusService],
 })

@@ -22,7 +22,13 @@ export class JwtAuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<Request & { user?: AuthUser }>();
     const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) {
+    // EventSource ozel header tasiyamaz; SSE akisi icin token ?token= query'den de kabul edilir.
+    const token = header?.startsWith('Bearer ')
+      ? header.slice('Bearer '.length)
+      : typeof req.query.token === 'string'
+        ? req.query.token
+        : undefined;
+    if (!token) {
       throw new UnauthorizedException({
         code: 'NO_TOKEN',
         message: 'Kimlik dogrulama gerekli.',
@@ -30,7 +36,7 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = await this.tokens.verifyAccess(header.slice('Bearer '.length));
+      const payload = await this.tokens.verifyAccess(token);
       const user: AuthUser = {
         userId: payload.sub,
         username: payload.username,

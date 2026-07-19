@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, clearSession, getUser, hasPerm } from '../lib/api';
+import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus } from '../lib/format';
 import type { Hall, Order, Table } from '../lib/types';
 
@@ -14,16 +15,17 @@ export default function TablesScreen() {
     queryKey: ['tables', 'active'],
     queryFn: () => api<Table[]>('/tables?active=true'),
   });
-  // ponytail: canli masa durumu icin LAN'da polling yeter; WebSocket ancak bu yetersiz kalirsa.
+  // Canli tazeleme SSE'den gelir; 30 sn polling SSE koparsa emniyet kemeri.
+  useLiveEvents();
   const openOrders = useQuery({
     queryKey: ['orders', 'open'],
     queryFn: () => api<Order[]>('/orders?open=true'),
-    refetchInterval: 5000,
+    refetchInterval: 30_000,
   });
   const heldOrders = useQuery({
     queryKey: ['orders', 'held'],
     queryFn: () => api<Order[]>('/orders?status=held'),
-    refetchInterval: 5000,
+    refetchInterval: 30_000,
   });
 
   const openByTable = new Map<string, Order>();

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, hasPerm } from '../lib/api';
+import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus, formatQty } from '../lib/format';
 import type { Category, Order, Product } from '../lib/types';
 import PaymentModal from './PaymentModal';
@@ -20,11 +21,12 @@ export default function OrderScreen() {
   const [transfer, setTransfer] = useState<'move' | 'merge' | null>(null);
   const [splitOpen, setSplitOpen] = useState(false);
 
+  // Canli tazeleme SSE'den gelir; 30 sn polling SSE koparsa emniyet kemeri.
+  useLiveEvents();
   const order = useQuery({
     queryKey: ['order', id],
     queryFn: () => api<Order>(`/orders/${id}`),
-    // ponytail: canli gorunum icin LAN'da polling yeter; WebSocket ancak bu yetersiz kalirsa.
-    refetchInterval: 5000,
+    refetchInterval: 30_000,
   });
   const categories = useQuery({
     queryKey: ['categories'],
