@@ -1,4 +1,4 @@
-// E2E smoke — calisan sunucuya karsi kritik para yollari.
+﻿// E2E smoke â€” calisan sunucuya karsi kritik para yollari.
 // Kullanim: backend'i ayaga kaldir (npm run dev) + seed, sonra: node test/smoke.e2e.mjs
 // Kapsam: merge, split, payment idempotency, reverse (iade), end-of-day, statement CSV.
 import { readdirSync } from 'node:fs';
@@ -12,7 +12,7 @@ const ok = [];
 const bad = [];
 function assert(cond, msg) {
   (cond ? ok : bad).push(msg);
-  console.log((cond ? '  ✓ ' : '  ✗ ') + msg);
+  console.log((cond ? '  âœ“ ' : '  âœ— ') + msg);
 }
 const uid = () => 'op-' + Math.random().toString(36).slice(2) + Date.now();
 
@@ -183,6 +183,113 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   const noTok = await fetch(`${BASE}/events/stream`);
   noTok.body?.cancel?.();
   assert(noTok.status === 401, `SSE tokensiz 401 (${noTok.status})`);
+
+  // --- SYNC: offline push (applied/duplicate/merge/conflict/review/rejected) ---
+  const t6 = await mk('M6');
+  const opOpen = uid(),
+    opLine = uid(),
+    opSubmit = uid();
+  const pushBody = {
+    deviceId: 'dev-smoke',
+    mutations: [
+      { clientOpId: opOpen, type: 'OPEN_TABLE', payload: { tableId: t6.id } },
+      {
+        clientOpId: opLine,
+        type: 'ADD_LINE',
+        payload: { orderClientOpId: opOpen, productId: prod.id, quantity: 1000 },
+      },
+      { clientOpId: opSubmit, type: 'SUBMIT_ORDER', payload: { orderClientOpId: opOpen } },
+    ],
+  };
+  const { data: push1 } = await call('POST', '/sync/mutations', pushBody);
+  assert(
+    push1.results?.every((r) => r.status === 'applied'),
+    `SYNC push 3x applied (${JSON.stringify(push1.results?.map((r) => r.status))})`,
+  );
+  const syncOrderId = push1.results[0].serverId;
+  const { data: syncOrder } = await call('GET', `/orders/${syncOrderId}`);
+  assert(syncOrder.grandTotal === 10000, `SYNC adisyon 10000 (${syncOrder.grandTotal})`);
+  assert(
+    syncOrder.items[0]?.status === 'sent',
+    `SYNC kalem mutfaga gitti (${syncOrder.items[0]?.status})`,
+  );
+
+  // replay -> duplicate, yeni kayit yok
+  const { data: push2 } = await call('POST', '/sync/mutations', pushBody);
+  assert(
+    push2.results?.every((r) => r.status === 'duplicate'),
+    `SYNC replay 3x duplicate (${JSON.stringify(push2.results?.map((r) => r.status))})`,
+  );
+  const { data: syncOrder2 } = await call('GET', `/orders/${syncOrderId}`);
+  assert(syncOrder2.items.length === 1, `SYNC replay kalem coglamadi (${syncOrder2.items.length})`);
+
+  // snapshot: acik adisyon + katalog tek istekte
+  const { data: snap } = await call('GET', '/sync/snapshot');
+  assert(
+    snap.orders?.some((o) => o.id === syncOrderId) &&
+      snap.products?.length > 0 &&
+      !!snap.serverTime,
+    'SYNC snapshot (orders+products+serverTime)',
+  );
+
+  // conflict: adisyon kapatildiktan sonra gelen offline kalem -> Owner review
+  await call('POST', `/orders/${syncOrderId}/cancel`, { reason: 'sync test' });
+  const opLate = uid();
+  const { data: push3 } = await call('POST', '/sync/mutations', {
+    deviceId: 'dev-smoke',
+    mutations: [
+      {
+        clientOpId: opLate,
+        type: 'ADD_LINE',
+        payload: { orderId: syncOrderId, productId: prod.id, quantity: 2000 },
+      },
+    ],
+  });
+  const conf = push3.results?.[0];
+  assert(
+    conf?.status === 'conflict' && !!conf?.reviewId,
+    `SYNC kapali adisyon -> conflict+review (${conf?.status})`,
+  );
+  const { data: reviews } = await call('GET', '/offline-reviews');
+  assert(
+    reviews.some((r) => r.id === conf.reviewId),
+    'SYNC review listede',
+  );
+
+  // resolve: yeni_adisyon -> kalem yeni adisyona uygulanir, review kapanir
+  const { data: resolved } = await call('POST', `/offline-reviews/${conf.reviewId}/resolve`, {
+    resolution: 'yeni_adisyon',
+  });
+  assert(
+    resolved.review?.status === 'resolved',
+    `SYNC review resolved (${resolved.review?.status})`,
+  );
+  assert(
+    resolved.result?.status === 'applied',
+    `SYNC review kalem applied (${resolved.result?.status})`,
+  );
+  const { data: reviews2 } = await call('GET', '/offline-reviews');
+  assert(!reviews2.some((r) => r.id === conf.reviewId), 'SYNC review listeden dustu');
+
+  // rejected: olmayan urun -> PRODUCT_INACTIVE
+  const { data: push4 } = await call('POST', '/sync/mutations', {
+    deviceId: 'dev-smoke',
+    mutations: [
+      {
+        clientOpId: uid(),
+        type: 'ADD_LINE',
+        payload: { orderClientOpId: opOpen, productId: 'yok-boyle-urun', quantity: 1000 },
+      },
+    ],
+  });
+  assert(
+    push4.results?.[0]?.status === 'rejected' && push4.results?.[0]?.reason === 'PRODUCT_INACTIVE',
+    `SYNC olmayan urun rejected (${push4.results?.[0]?.reason})`,
+  );
+
+  // sync/health token'siz erisilir
+  const sh = await fetch(`${BASE}/sync/health`);
+  assert(sh.status === 200, `SYNC health tokensiz 200 (${sh.status})`);
 
   console.log(`\nE2E SONUC: ${ok.length} gecti, ${bad.length} kaldi`);
   process.exit(bad.length ? 1 : 0);

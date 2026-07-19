@@ -15,6 +15,8 @@ export interface AuditEntry {
   newValue?: unknown;
   reason?: string;
   deviceId?: string;
+  origin?: string; // AuditOrigin: online (vars.) | offline — OFFLINE_DESIGN.md §12
+  clientOpId?: string; // offline replay'de iliskili mutasyon ULID
 }
 
 /**
@@ -70,6 +72,8 @@ export class AuditService {
           hash,
           createdAt,
           ...(entry.deviceId ? { deviceId: entry.deviceId } : {}),
+          ...(entry.origin ? { origin: entry.origin } : {}),
+          ...(entry.clientOpId ? { clientOpId: entry.clientOpId } : {}),
         },
       });
       return hash;
