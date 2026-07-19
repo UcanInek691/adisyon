@@ -108,6 +108,14 @@ export default function TablesScreen() {
               Masa Yönetimi
             </button>
           )}
+          {hasPerm('user.manage') && (
+            <button
+              onClick={() => nav('/users')}
+              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
+            >
+              Kullanıcılar
+            </button>
+          )}
           {(hasPerm('settings.manage') || hasPerm('backup.manage')) && (
             <button
               onClick={() => nav('/settings')}
