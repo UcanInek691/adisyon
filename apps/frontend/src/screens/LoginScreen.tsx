@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, login, loginPin, ApiError } from '../lib/api';
+import { pullSnapshot } from '../offline/engine';
 
 type Mode = 'owner' | 'waiter';
 
@@ -25,6 +26,7 @@ export default function LoginScreen() {
     try {
       if (mode === 'owner') await login(username, secret);
       else await loginPin(username, secret);
+      void pullSnapshot(); // offline reboot icin katalog cache'ini hemen isit
       nav('/', { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Giriş başarısız.');
