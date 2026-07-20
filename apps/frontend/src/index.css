@@ -1,0 +1,11 @@
+@import 'tailwindcss';
+
+/* Dokunmatik oncelikli: metin secimi kapali, tap highlight yok. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}

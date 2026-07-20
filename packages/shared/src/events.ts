@@ -64,6 +64,16 @@ export const DomainEventName = {
   ProductCreated: 'product.created',
   ProductUpdated: 'product.updated',
   ProductDeleted: 'product.deleted',
+  TableCreated: 'table.created',
+  TableUpdated: 'table.updated',
+  TableDeleted: 'table.deleted',
+  OrderCreated: 'order.created',
+  OrderUpdated: 'order.updated',
+  OrderItemAdded: 'order.item.added',
+  OrderItemVoided: 'order.item.voided',
+  OrderItemSent: 'order.item.sent',
+  OrderPaid: 'order.paid',
+  OrderRefunded: 'order.refunded',
 } as const;
 
 export type DomainEventName = (typeof DomainEventName)[keyof typeof DomainEventName];
@@ -74,4 +84,66 @@ export interface ProductEventPayload {
   name: string;
   categoryId: string;
   salePrice: number; // kurus
+}
+
+// --- Masa event payload'lari ---
+export interface TableEventPayload {
+  tableId: string;
+  hallId: string;
+  name: string;
+}
+
+// --- Siparis event payload'lari ---
+export interface OrderEventPayload {
+  orderId: string;
+  orderNo: string;
+  tableId?: string;
+  status: string;
+  grandTotal: number; // kurus
+}
+
+export interface OrderItemEventPayload {
+  orderId: string;
+  orderItemId: string;
+  productId: string;
+  quantity: number; // milis
+  lineTotal: number; // kurus
+}
+
+/**
+ * Kalemler mutfaga/bara iletildiginde yayinlanir. Dinleyici: yazdirma (hazirlik fisi).
+ */
+export interface OrderItemSentEventPayload {
+  orderId: string;
+  items: Array<{
+    orderItemId: string;
+    productId: string;
+    productName: string;
+    quantity: number; // milis
+  }>;
+}
+
+/**
+ * Her odeme kaydinda yayinlanir (split odemede birden cok kez). Dinleyiciler:
+ * kasa (nakit hareketi), veresiye (method='debt'), yazdirma (fis), stok yok.
+ */
+export interface OrderPaidEventPayload {
+  orderId: string;
+  paymentId: string;
+  amount: number; // kurus (bu odemenin tutari)
+  method: string; // PaymentMethod
+  customerId?: string; // veresiye (method='debt') icin
+}
+
+/**
+ * Bir odeme iade edildiginde (ters kayit) yayinlanir. Dinleyiciler orijinal
+ * order.paid etkisini geri alir: kasa (nakit cikisi), veresiye (borc geri alma).
+ */
+export interface OrderRefundedEventPayload {
+  orderId: string;
+  paymentId: string; // iade (refund) kaydinin id'si
+  originalPaymentId: string; // ters alinan orijinal odeme
+  amount: number; // kurus
+  method: string; // PaymentMethod
+  customerId?: string; // veresiye iadesi icin
 }

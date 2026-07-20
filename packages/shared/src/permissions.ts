@@ -9,6 +9,7 @@ export const Permission = {
   PriceChange: 'price.change',
   // Masa & siparis
   TableView: 'table.view',
+  TableManage: 'table.manage', // salon/masa tanimi + kat plani (Owner)
   OrderCreate: 'order.create',
   OrderItemEdit: 'order.item.edit',
   OrderSendKitchen: 'order.send_kitchen',
@@ -27,6 +28,7 @@ export const Permission = {
   ReportView: 'report.view',
   AuditView: 'audit.view',
   // Sistem
+  UserManage: 'user.manage',
   SettingsManage: 'settings.manage',
   PrinterManage: 'printer.manage',
   LicenseManage: 'license.manage',

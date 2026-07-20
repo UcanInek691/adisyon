@@ -40,6 +40,71 @@
 
 ---
 
+### `table.created`
+- **Amaci:** Yeni masa tanimlandi (salon + kat plani).
+- **Yayinlandigi yer:** `TablesService.createTable` (post-commit).
+- **Payload:** `{ tableId, hallId, name }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, canli masa katmani (WS), Sync.
+
+### `table.updated`
+- **Amaci:** Masa tanimi/konumu (posX/posY) guncellendi.
+- **Yayinlandigi yer:** `TablesService.updateTable` (post-commit).
+- **Payload:** `{ tableId, hallId, name }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, canli masa katmani (WS), Sync.
+
+### `table.deleted`
+- **Amaci:** Masa soft-delete edildi.
+- **Yayinlandigi yer:** `TablesService.deleteTable` (post-commit; payload silinmeden onceki durum).
+- **Payload:** `{ tableId, hallId, name }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, Sync.
+
+> Not: Masa **durum** event'leri (`table.reserved`, `table.merged`, `table.moved`, occupied gecisi)
+> siparise bagli oldugu icin Siparis modulunde eklenecek.
+
+### `order.created`
+- **Amaci:** Yeni adisyon acildi (masa varsa occupied'a gecti).
+- **Yayinlandigi yer:** `OrdersService.openOrder` (post-commit).
+- **Payload:** `{ orderId, orderNo, tableId?, status, grandTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, canli masa (WS), Sync, (mutfak yazdirma send ile).
+
+### `order.item.added`
+- **Amaci:** Adisyona kalem eklendi (fiyat/vergi snapshot alinmis).
+- **Yayinlandigi yer:** `OrdersService.addItem` (post-commit).
+- **Payload:** `{ orderId, orderItemId, productId, quantity, lineTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Dashboard, Sync.
+
+### `order.item.voided`
+- **Amaci:** Kalem iptal edildi (void; Owner).
+- **Yayinlandigi yer:** `OrdersService.voidItem` (post-commit).
+- **Payload:** `{ orderId, orderItemId, productId, quantity, lineTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: Audit ozel, Dashboard, Sync.
+
+### `order.updated`
+- **Amaci:** Adisyon toplamlari/durumu degisti (kalem ekle/sil/void, iptal).
+- **Yayinlandigi yer:** `OrdersService` (addItem/updateItem/removeItem/voidItem/cancelOrder, post-commit).
+- **Payload:** `{ orderId, orderNo, tableId?, status, grandTotal }`.
+- **Dinleyen moduller:** `EventLoggerSubscriber`. İleride: canli masa (WS), Dashboard, Sync.
+
+### `order.item.sent`
+- **Amaci:** Bekleyen kalemler mutfaga/bara iletildi (hazirlik).
+- **Yayinlandigi yer:** `OrdersService.sendToKitchen` (post-commit).
+- **Payload:** `{ orderId, items: [{ orderItemId, productId, productName, quantity }] }`.
+- **Dinleyen moduller:** `PrintingService` (mutfak fisi + Receipt kaydi).
+
+### `order.paid`
+- **Amaci:** Adisyona bir odeme alindi (append-only). Split/kismi odemede her odemede yayinlanir.
+- **Yayinlandigi yer:** `PaymentsService.recordPayment` (post-commit).
+- **Payload:** `{ orderId, paymentId, amount, method, customerId? }` (`customerId` yalniz veresiye).
+- **Dinleyen moduller:** `CashService` (nakit hareketi), `CustomerService` (veresiye, `method='debt'`), `PrintingService` (fis). İleride: Dashboard, Sync.
+
+### `order.refunded`
+- **Amaci:** Bir odeme iade edildi (ters kayit). Adisyon kapaliysa ve tam odemenin altina duserse yeniden acilir.
+- **Yayinlandigi yer:** `PaymentsService.reversePayment` (post-commit).
+- **Payload:** `{ orderId, paymentId, originalPaymentId, amount, method, customerId? }`.
+- **Dinleyen moduller:** `CashService` (nakit cikisi), `CustomerService` (veresiye borc geri alma).
+
+> Not: `order.closed` / `receipt.printed` henuz yok; mutfak `order.item.sent` PR2'de.
+
 ## Planlanan Event'ler (modul gelince eklenecek)
 
 Asagidakiler kod sozlesmesine (`DomainEventName`) ve bu katalogsa ilgili modul inşa edilirken
@@ -51,7 +116,6 @@ eklenecektir. Dinleyiciler sutunu hedeftir.
 | `order.item.added` / `order.item.removed` | Sipariş | Dashboard, TimeMachine |
 | `order.cancelled` | Sipariş | Audit, Dashboard, Sync |
 | `order.closed` | Sipariş | Dashboard, Sync |
-| `order.paid` | Ödeme | Printer(fis), Audit, CashRegister, Dashboard, Sync, Notification |
 | `receipt.printed` | Yazdırma | Audit, TimeMachine |
 | `price.changed` | Katalog | Audit, Cache invalidation, Dashboard |
 | `debt.created` / `debt.paid` | Veresiye | Audit, Dashboard, Sync |

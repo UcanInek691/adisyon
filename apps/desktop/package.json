@@ -1,0 +1,48 @@
+{
+  "name": "@ado/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Adisyon/POS masaüstü kabuğu (Electron)",
+  "main": "main.mjs",
+  "scripts": {
+    "dev": "electron .",
+    "dist": "node build-bundle.mjs && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.ado.pos",
+    "npmRebuild": false,
+    "productName": "Adisyon POS",
+    "files": [
+      "main.mjs"
+    ],
+    "extraResources": [
+      {
+        "from": "bundle/backend",
+        "to": "backend"
+      },
+      {
+        "from": "bundle/backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "bundle/frontend",
+        "to": "frontend"
+      },
+      {
+        "from": "bundle/template.db",
+        "to": "template.db"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "runAfterFinish": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3"
+  }
+}
