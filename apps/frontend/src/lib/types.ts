@@ -157,3 +157,16 @@ export interface Backup {
   sizeBytes: number;
   createdAt: string;
 }
+
+// Cakisan offline mutasyonun Owner onay kaydi. OFFLINE_DESIGN.md §9.2
+export interface OfflineReview {
+  id: string;
+  deviceId: string;
+  waiterId: string;
+  clientOpId: string;
+  mutationType: string; // OfflineMutationType
+  mutationPayload: string; // JSON (TEXT)
+  reason: string; // table_closed | table_moved | product_inactive | other
+  status: string; // open | resolved | rejected
+  createdAt: string;
+}

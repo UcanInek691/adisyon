@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, clearSession, getUser, hasPerm } from '../lib/api';
 import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus } from '../lib/format';
-import type { Order, Table } from '../lib/types';
+import type { OfflineReview, Order, Table } from '../lib/types';
 import SyncBadge from '../offline/SyncBadge';
 import { offlineOpenTable } from '../offline/actions';
 import { isOffline } from '../offline/engine';
@@ -35,6 +35,13 @@ export default function TablesScreen() {
     queryKey: ['local-drafts'],
     queryFn: () => draftAll(),
     refetchInterval: 2000,
+  });
+  // Cakisan offline mutasyonlarin Owner onay sayisi. OFFLINE_DESIGN.md §8
+  const reviewCount = useQuery({
+    queryKey: ['offline-reviews', 'count'],
+    queryFn: async () => (await api<OfflineReview[]>('/offline-reviews')).length,
+    refetchInterval: 20_000,
+    enabled: hasPerm('order.cancel'),
   });
 
   const openByTable = new Map<string, Order>();
@@ -136,6 +143,14 @@ export default function TablesScreen() {
               className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
             >
               Kullanıcılar
+            </button>
+          )}
+          {hasPerm('order.cancel') && (reviewCount.data ?? 0) > 0 && (
+            <button
+              onClick={() => nav('/offline-reviews')}
+              className="rounded-lg bg-orange-100 px-3 py-1 font-medium text-orange-700"
+            >
+              Offline Onay ({reviewCount.data})
             </button>
           )}
           {(hasPerm('settings.manage') || hasPerm('backup.manage')) && (
