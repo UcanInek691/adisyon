@@ -4,7 +4,7 @@
 > (`SYSTEM_ANALYSIS.md §5`, `API_DESIGN.md`, `DATABASE_DESIGN.md`, `ROADMAP.md`)
 > karşı **ne yapıldı / kısmi / eksik** durumunu tek yerde tutar.
 
-**Oluşturuldu:** 2026-07-16 · **Güncellendi:** 2026-07-19 · **Legend:** ✅ tam · 🟡 kısmi · ❌ yok
+**Oluşturuldu:** 2026-07-16 · **Güncellendi:** 2026-07-20 · **Legend:** ✅ tam · 🟡 kısmi · ❌ yok
 
 ---
 
@@ -63,6 +63,6 @@
 |------|-------|
 | **Frontend** (Electron + LAN tarayıcı) | ✅ MVP: 14 ekran + Electron/NSIS paketi (PR #5) + ilk-kurulum sihirbazı (PR #6) + kullanıcı yönetimi (PR #8) |
 | **Canlı masa/adisyon** | ✅ SSE ile olay tabanlı tazeleme + 30 sn emniyet polling'i (PR #9). socket.io "belki" rafta: cihaza hedefli komut itme ihtiyacı doğarsa |
-| **Offline / Sync motoru** | 🟡 **Sunucu tarafı TAM:** `/sync/mutations` (idempotent replay + akıllı birleştirme) + `/sync/snapshot` + `/sync/health` + `/offline-reviews` Owner onay kuyruğu. Kalan: tablet PWA (IndexedDB outbox + Sync Engine + rozetler) ve Owner review ekranı |
+| **Offline / Sync motoru (Faz 1: tablet→yerel sunucu)** | ✅ **TAM (PR #11 + PR #12).** Sunucu: `/sync/mutations` (idempotent replay + akıllı birleştirme) + `/sync/snapshot` + `/sync/health` + `/offline-reviews`. İstemci (tablet PWA): IndexedDB outbox + Sync Engine (durum makinesi + health ping + reconnect drain) + service worker (offline app-shell) + optimistic UI + `SyncBadge` bağlantı rozeti; dikey dilim masa aç→kalem ekle→mutfağa gönder offline; Owner offline onay ekranı. E2E iki kritik hatayı yakaladı+düzeltti: react-query `networkMode:'always'` (yoksa offline'da tüm query/mutation duraklıyordu) ve SW `navigateFallback`+`clientsClaim` (offline reboot app-shell). Opsiyonel kalan: storage %80/%95 uyarısı, cache TTL "bayat" rozeti, degraded-clear |
 | Lisans yönetimi / Otomatik güncelleme / Kod imzalama | 🟡/❌ İleride |
-| **Test / CI** | ✅ Birim self-check (payments/orders/reports calc) + e2e smoke (30 kontrol) + CI kapısı |
+| **Test / CI** | ✅ Birim self-check (payments/orders/reports calc + offline `sync-core`) + backend e2e smoke (43 kontrol, `/sync/*` dahil) + **tarayıcı offline E2E (Playwright, CI `e2e-web` job: gerçek PWA + IndexedDB + SW + reconnect)** + CI kapısı (build/e2e/e2e-web/GitGuardian) |
