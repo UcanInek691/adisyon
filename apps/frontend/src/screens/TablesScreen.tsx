@@ -3,35 +3,47 @@ import { useNavigate } from 'react-router-dom';
 import { api, clearSession, getUser, hasPerm } from '../lib/api';
 import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus } from '../lib/format';
-import type { Hall, Order, Table } from '../lib/types';
+import type { Order, Table } from '../lib/types';
+import SyncBadge from '../offline/SyncBadge';
+import { offlineOpenTable } from '../offline/actions';
+import { isOffline } from '../offline/engine';
+import { draftAll } from '../offline/db';
+import { readHalls, readTables, readOpenOrders, readHeldOrders } from '../offline/read';
+import type { DraftOrder } from '../offline/sync-core';
 
 export default function TablesScreen() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const user = getUser();
 
-  const halls = useQuery({ queryKey: ['halls'], queryFn: () => api<Hall[]>('/halls') });
-  const tables = useQuery({
-    queryKey: ['tables', 'active'],
-    queryFn: () => api<Table[]>('/tables?active=true'),
-  });
+  const halls = useQuery({ queryKey: ['halls'], queryFn: readHalls });
+  const tables = useQuery({ queryKey: ['tables', 'active'], queryFn: readTables });
   // Canli tazeleme SSE'den gelir; 30 sn polling SSE koparsa emniyet kemeri.
   useLiveEvents();
   const openOrders = useQuery({
     queryKey: ['orders', 'open'],
-    queryFn: () => api<Order[]>('/orders?open=true'),
+    queryFn: readOpenOrders,
     refetchInterval: 30_000,
   });
   const heldOrders = useQuery({
     queryKey: ['orders', 'held'],
-    queryFn: () => api<Order[]>('/orders?status=held'),
+    queryFn: readHeldOrders,
     refetchInterval: 30_000,
+  });
+  // Offline acilan (henuz sync olmamis) taslak adisyonlar. OFFLINE_DESIGN.md §4.2
+  const localDrafts = useQuery({
+    queryKey: ['local-drafts'],
+    queryFn: () => draftAll(),
+    refetchInterval: 2000,
   });
 
   const openByTable = new Map<string, Order>();
   for (const o of openOrders.data ?? []) if (o.tableId) openByTable.set(o.tableId, o);
   const heldByTable = new Map<string, Order>();
   for (const o of heldOrders.data ?? []) if (o.tableId) heldByTable.set(o.tableId, o);
+  const localByTable = new Map<string, DraftOrder>();
+  for (const d of localDrafts.data ?? [])
+    if (d.tableId && !d.serverId) localByTable.set(d.tableId, d);
 
   const createOrder = useMutation({
     mutationFn: (tableId: string) => api<Order>('/orders', { method: 'POST', body: { tableId } }),
@@ -48,12 +60,19 @@ export default function TablesScreen() {
     },
   });
 
-  function onTable(t: Table) {
+  async function onTable(t: Table) {
     const open = openByTable.get(t.id);
+    const local = localByTable.get(t.id);
     const held = heldByTable.get(t.id);
-    if (open) nav(`/orders/${open.id}`);
-    else if (held) resumeOrder.mutate(held.id);
-    else createOrder.mutate(t.id);
+    if (open) return nav(`/orders/${open.id}`);
+    if (local) return nav(`/orders/${local.id}`);
+    if (held) return resumeOrder.mutate(held.id);
+    if (isOffline()) {
+      const id = await offlineOpenTable(t.id, t.name);
+      qc.invalidateQueries({ queryKey: ['local-drafts'] });
+      return nav(`/orders/${id}`);
+    }
+    createOrder.mutate(t.id);
   }
 
   function logout() {
@@ -69,6 +88,7 @@ export default function TablesScreen() {
       <header className="flex items-center justify-between bg-white px-6 py-3 shadow">
         <h1 className="text-xl font-bold text-slate-800">Masalar</h1>
         <div className="flex items-center gap-3 text-sm text-slate-500">
+          <SyncBadge />
           <span>{user?.displayName ?? user?.role ?? ''}</span>
           {hasPerm('cash.manage') && (
             <button
@@ -150,15 +170,16 @@ export default function TablesScreen() {
               <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
                 {hallTables.map((t) => {
                   const open = openByTable.get(t.id);
-                  const held = !open ? heldByTable.get(t.id) : undefined;
-                  const active = open ?? held;
+                  const local = !open ? localByTable.get(t.id) : undefined;
+                  const held = !open && !local ? heldByTable.get(t.id) : undefined;
+                  const active = open ?? local ?? held;
                   return (
                     <button
                       key={t.id}
-                      onClick={() => onTable(t)}
+                      onClick={() => void onTable(t)}
                       disabled={busy}
                       className={`flex aspect-square flex-col items-center justify-center rounded-xl p-2 text-center font-semibold shadow ${
-                        open
+                        open || local
                           ? 'bg-amber-500 text-white'
                           : held
                             ? 'bg-purple-500 text-white'
@@ -167,6 +188,7 @@ export default function TablesScreen() {
                     >
                       <span className="text-lg">{t.name}</span>
                       {held && <span className="mt-0.5 text-[10px]">bekletiliyor</span>}
+                      {local && <span className="mt-0.5 text-[10px]">⏳ senkron bekliyor</span>}
                       {active && (
                         <span className="mt-1 text-xs">{formatKurus(active.grandTotal)}</span>
                       )}

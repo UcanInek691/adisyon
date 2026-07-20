@@ -1,14 +1,26 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError, hasPerm } from '../lib/api';
 import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus, formatQty } from '../lib/format';
-import type { Category, Order, Product } from '../lib/types';
+import type { Order, Product } from '../lib/types';
 import PaymentModal from './PaymentModal';
 import DiscountModal from './DiscountModal';
 import TableTransferModal from './TableTransferModal';
 import SplitModal from './SplitModal';
+import SyncBadge from '../offline/SyncBadge';
+import { isOffline } from '../offline/engine';
+import { draftDelete } from '../offline/db';
+import {
+  isLocalId,
+  offlineAddLine,
+  offlineSubmit,
+  offlineUpdateQty,
+  offlineRemoveLine,
+  readLocalOrder,
+} from '../offline/actions';
+import { readCategories, readProducts } from '../offline/read';
 
 export default function OrderScreen() {
   const { id = '' } = useParams();
@@ -21,44 +33,61 @@ export default function OrderScreen() {
   const [transfer, setTransfer] = useState<'move' | 'merge' | null>(null);
   const [splitOpen, setSplitOpen] = useState(false);
 
+  // local: -> offline acilan taslak; sunucu id yerine IndexedDB'den okunur.
+  const local = isLocalId(id);
   // Canli tazeleme SSE'den gelir; 30 sn polling SSE koparsa emniyet kemeri.
   useLiveEvents();
   const order = useQuery({
     queryKey: ['order', id],
-    queryFn: () => api<Order>(`/orders/${id}`),
-    refetchInterval: 30_000,
+    queryFn: (): Promise<Order & { serverId?: string }> =>
+      local ? readLocalOrder(id) : api<Order>(`/orders/${id}`),
+    refetchInterval: local ? 2_000 : 30_000, // local: sync sonrasi serverId'yi yakala
   });
-  const categories = useQuery({
-    queryKey: ['categories'],
-    queryFn: () => api<Category[]>('/categories'),
-  });
-  const products = useQuery({
-    queryKey: ['products', 'active'],
-    queryFn: () => api<Product[]>('/products?active=true'),
-  });
+  const categories = useQuery({ queryKey: ['categories'], queryFn: readCategories });
+  const products = useQuery({ queryKey: ['products', 'active'], queryFn: readProducts });
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['order', id] });
   const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'İşlem başarısız.');
 
   const addItem = useMutation({
-    mutationFn: (productId: string) =>
-      api(`/orders/${id}/items`, { method: 'POST', body: { productId, quantity: 1000 } }),
+    mutationFn: (p: Product) => {
+      if (local) return offlineAddLine(id, { id: p.id, name: p.name, salePrice: p.salePrice });
+      if (isOffline())
+        throw new ApiError(
+          0,
+          'OFFLINE',
+          'Bağlantı yok — çevrimiçi açılan adisyona ekleme için bağlantı bekleniyor.',
+        );
+      return api(`/orders/${id}/items`, {
+        method: 'POST',
+        body: { productId: p.id, quantity: 1000 },
+      });
+    },
     onSuccess: refresh,
     onError: fail,
   });
   const sendKitchen = useMutation({
-    mutationFn: () => api(`/orders/${id}/send-kitchen`, { method: 'POST' }),
+    mutationFn: () =>
+      local ? offlineSubmit(id) : api(`/orders/${id}/send-kitchen`, { method: 'POST' }),
     onSuccess: refresh,
     onError: fail,
   });
   const updateQty = useMutation({
     mutationFn: (v: { itemId: string; quantity: number }) =>
-      api(`/orders/${id}/items/${v.itemId}`, { method: 'PATCH', body: { quantity: v.quantity } }),
+      local
+        ? offlineUpdateQty(id, v.itemId, v.quantity)
+        : api(`/orders/${id}/items/${v.itemId}`, {
+            method: 'PATCH',
+            body: { quantity: v.quantity },
+          }),
     onSuccess: refresh,
     onError: fail,
   });
   const removeItem = useMutation({
-    mutationFn: (itemId: string) => api(`/orders/${id}/items/${itemId}`, { method: 'DELETE' }),
+    mutationFn: (itemId: string) =>
+      local
+        ? offlineRemoveLine(id, itemId)
+        : api(`/orders/${id}/items/${itemId}`, { method: 'DELETE' }),
     onSuccess: refresh,
     onError: fail,
   });
@@ -77,6 +106,13 @@ export default function OrderScreen() {
     onError: fail,
   });
   const o = order.data;
+  // Sync sonrasi taslak gercek order id kazandi -> sunucu adisyonuna gec, taslagi sil.
+  useEffect(() => {
+    if (local && o?.serverId) {
+      void draftDelete(id);
+      nav(`/orders/${o.serverId}`, { replace: true });
+    }
+  }, [local, o?.serverId, id, nav]);
   const cats = categories.data ?? [];
   const cat = activeCat || cats[0]?.id || '';
   const catProducts = (products.data ?? []).filter((p) => p.categoryId === cat);
@@ -102,7 +138,8 @@ export default function OrderScreen() {
             ← Masalar
           </button>
           <span className="font-semibold text-slate-700">Adisyon {o?.orderNo ?? ''}</span>
-          {o?.status === 'open' && o.tableId && (
+          <SyncBadge />
+          {o?.status === 'open' && o.tableId && !local && (
             <div className="ml-auto flex gap-2">
               <button
                 onClick={() => setTransfer('move')}
@@ -211,14 +248,14 @@ export default function OrderScreen() {
           <div className="mb-2 grid grid-cols-2 gap-2">
             <button
               onClick={() => setDiscountOpen(true)}
-              disabled={busy || !o || o.status !== 'open'}
+              disabled={busy || local || !o || o.status !== 'open'}
               className="rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
             >
               İndirim
             </button>
             <button
               onClick={() => hold.mutate()}
-              disabled={busy || hold.isPending || !o || o.status !== 'open'}
+              disabled={busy || local || hold.isPending || !o || o.status !== 'open'}
               className="rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
             >
               Beklet
@@ -235,7 +272,7 @@ export default function OrderScreen() {
             {canPay && (
               <button
                 onClick={() => setPayOpen(true)}
-                disabled={busy || !o || o.grandTotal <= 0}
+                disabled={busy || local || !o || o.grandTotal <= 0}
                 className="rounded-lg bg-green-600 py-3 font-semibold text-white disabled:opacity-40"
               >
                 Öde
@@ -264,7 +301,7 @@ export default function OrderScreen() {
           {catProducts.map((p) => (
             <button
               key={p.id}
-              onClick={() => addItem.mutate(p.id)}
+              onClick={() => addItem.mutate(p)}
               disabled={busy}
               className="flex aspect-square flex-col items-center justify-center rounded-xl bg-white p-2 text-center shadow disabled:opacity-50"
             >
