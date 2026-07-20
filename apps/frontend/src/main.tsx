@@ -7,7 +7,12 @@ import './index.css';
 import { startEngine } from './offline/engine';
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+  // networkMode 'always': offline'da query/mutation'lari DURAKLATMA. Offline yolu
+  // read.ts (snapshot fallback) ve offline actions kendisi yonetir. OFFLINE_DESIGN.md §10
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: false, networkMode: 'always' },
+    mutations: { networkMode: 'always' },
+  },
 });
 
 // Baglanti izleme + outbox drain (istemci-offline). OFFLINE_DESIGN.md §10

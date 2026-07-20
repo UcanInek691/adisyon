@@ -37,3 +37,10 @@ backups/
 coverage/
 
 apps/desktop/bundle/
+
+# Playwright E2E (uretilen fixture/auth + raporlar)
+apps/frontend/e2e/.auth/
+apps/frontend/e2e/.fixtures.json
+apps/frontend/playwright-report/
+apps/frontend/test-results/
+apps/frontend/blob-report/

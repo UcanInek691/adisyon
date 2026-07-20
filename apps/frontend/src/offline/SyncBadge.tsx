@@ -18,6 +18,8 @@ export default function SyncBadge() {
   const l = LABEL[mode];
   return (
     <span
+      data-testid="sync-badge"
+      data-mode={mode}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${l.cls}`}
       title="Bağlantı durumu"
     >

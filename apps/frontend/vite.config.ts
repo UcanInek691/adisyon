@@ -13,7 +13,14 @@ export default defineConfig({
     // PWA: app-shell precache -> tablet offline'da uygulama acilir. OFFLINE_DESIGN.md §3, K5
     VitePWA({
       registerType: 'autoUpdate',
-      workbox: { navigateFallbackDenylist: [/^\/api/] }, // /api asla shell'e dusmesin
+      workbox: {
+        // Yeni SW aktif olunca acik sayfalari HEMEN kontrol et -> ilk yenileme offline calisir.
+        clientsClaim: true,
+        skipWaiting: true,
+        // Offline'da rota yenilemesi -> app-shell (index.html). /api haric.
+        navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/^\/api/],
+      },
       manifest: {
         name: 'Adisyon POS',
         short_name: 'Adisyon',

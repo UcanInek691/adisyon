@@ -38,6 +38,7 @@ export function isOffline(): boolean {
 
 let qc: QueryClient | null = null;
 let draining = false;
+let lastSnapshot = 0; // katalog cache tazelik damgasi (offline reboot icin sicak tut)
 
 function authHeaders(): Record<string, string> {
   const t = getAccess();
@@ -64,6 +65,7 @@ export async function pullSnapshot(): Promise<void> {
     if (r.ok) {
       const b = await r.json();
       await metaSet('snapshot', b?.data ?? b);
+      lastSnapshot = Date.now();
     }
   } catch {
     /* offline: eski cache kalir */
@@ -150,15 +152,21 @@ export function startEngine(client: QueryClient): () => void {
       await pullSnapshot();
       qc?.invalidateQueries();
       set({ mode: 'online' });
+    } else if (getAccess() && Date.now() - lastSnapshot > 60_000) {
+      // Online + bekleyen yok: katalog snapshot'ini periyodik tazele -> offline reboot sicak.
+      await pullSnapshot();
     }
   };
 
   void tick();
   const iv = window.setInterval(() => void tick(), 8000);
   const onOnline = () => void tick();
+  const onOffline = () => set({ mode: 'offline' }); // navigator.onLine=false kesindir
   window.addEventListener('online', onOnline);
+  window.addEventListener('offline', onOffline);
   return () => {
     window.clearInterval(iv);
     window.removeEventListener('online', onOnline);
+    window.removeEventListener('offline', onOffline);
   };
 }

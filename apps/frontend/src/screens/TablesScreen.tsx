@@ -191,6 +191,7 @@ export default function TablesScreen() {
                   return (
                     <button
                       key={t.id}
+                      data-testid={`table-${t.id}`}
                       onClick={() => void onTable(t)}
                       disabled={busy}
                       className={`flex aspect-square flex-col items-center justify-center rounded-xl p-2 text-center font-semibold shadow ${

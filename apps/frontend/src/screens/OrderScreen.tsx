@@ -172,7 +172,7 @@ export default function OrderScreen() {
           {(o?.items ?? []).map((it) => {
             const pending = it.status === 'pending';
             return (
-              <li key={it.id} className="border-b px-2 py-2">
+              <li key={it.id} data-testid="order-item" className="border-b px-2 py-2">
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-slate-800">{it.productNameSnapshot}</span>
                   <span className="font-semibold text-slate-700">{formatKurus(it.lineTotal)}</span>
@@ -263,6 +263,7 @@ export default function OrderScreen() {
           </div>
           <div className={`grid gap-2 ${canPay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <button
+              data-testid="send-kitchen"
               onClick={() => sendKitchen.mutate()}
               disabled={busy || !hasPending}
               className="rounded-lg bg-slate-700 py-3 font-semibold text-white disabled:opacity-40"
@@ -288,6 +289,7 @@ export default function OrderScreen() {
           {cats.map((c) => (
             <button
               key={c.id}
+              data-testid={`category-${c.id}`}
               onClick={() => setActiveCat(c.id)}
               className={`whitespace-nowrap rounded-lg px-4 py-2 font-medium ${
                 c.id === cat ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
@@ -301,6 +303,7 @@ export default function OrderScreen() {
           {catProducts.map((p) => (
             <button
               key={p.id}
+              data-testid={`product-${p.id}`}
               onClick={() => addItem.mutate(p)}
               disabled={busy}
               className="flex aspect-square flex-col items-center justify-center rounded-xl bg-white p-2 text-center shadow disabled:opacity-50"
