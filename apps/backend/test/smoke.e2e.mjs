@@ -291,6 +291,38 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   const sh = await fetch(`${BASE}/sync/health`);
   assert(sh.status === 200, `SYNC health tokensiz 200 (${sh.status})`);
 
+  // --- STOK: dusum MUTFAGA GONDERINCE; pending kalem + remove sizinti YAPMAZ ---
+  const { data: stockProd } = await call('POST', '/products', {
+    name: 'StokUrun ' + Date.now(),
+    categoryId: cat.id,
+    unitId: unit.id,
+    taxId: tax.id,
+    salePrice: 5000,
+    trackStock: true,
+  });
+  const { data: stockTable } = await call('POST', '/tables', {
+    hallId: hall.id,
+    name: 'SM' + Date.now(),
+  });
+  const { data: sOrder } = await call('POST', '/orders', { tableId: stockTable.id });
+  await call('POST', `/orders/${sOrder.id}/items`, { productId: stockProd.id, quantity: 2000 }); // A
+  await call('POST', `/orders/${sOrder.id}/items`, { productId: stockProd.id, quantity: 1000 }); // B
+  let { data: mv } = await call('GET', `/inventory/movements/${stockProd.id}`);
+  assert((mv?.length ?? 0) === 0, `STOK pending kalemde hareket yok (${mv?.length})`);
+  // B kalemini (pending) sil -> mutfaga gonderilince DUSMEMELI (sizinti yok)
+  const { data: full } = await call('GET', `/orders/${sOrder.id}`);
+  const itemB = full.items.find((i) => i.quantity === 1000);
+  await call('DELETE', `/orders/${sOrder.id}/items/${itemB.id}`);
+  // mutfaga gonder -> yalniz A (2000) duser; silinen B sizmaz
+  await call('POST', `/orders/${sOrder.id}/send-kitchen`);
+  await new Promise((r) => setTimeout(r, 400)); // @OnEvent async
+  ({ data: mv } = await call('GET', `/inventory/movements/${stockProd.id}`));
+  const neg = (mv ?? []).filter((m) => m.quantity < 0);
+  assert(
+    neg.length === 1 && neg[0].quantity === -2000,
+    `STOK: yalniz gonderilen kalem dustu -2000, silinen sizmadi (${JSON.stringify(neg.map((m) => m.quantity))})`,
+  );
+
   console.log(`\nE2E SONUC: ${ok.length} gecti, ${bad.length} kaldi`);
   process.exit(bad.length ? 1 : 0);
 })().catch((e) => {

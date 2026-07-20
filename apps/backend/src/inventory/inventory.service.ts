@@ -181,33 +181,35 @@ export class InventoryService {
   // ===========================================================================
   // Domain Event Listeners (Otomatik Stok Düşümü)
   // ===========================================================================
-  @OnEvent('order.item.added', { async: true })
-  async handleOrderItemAdded(event: any) {
-    const { productId, quantity, orderItemId } = event.payload;
+  // Stok, kalem MUTFAGA GONDERILINCE (order.item.sent) dusulur; 'added'da DEGIL.
+  // Boylece pending/taslak/offline kalemler (silinebilir, degistirilebilir) stok tutmaz
+  // -> removeItem/updateItem stok sizintisi olusturmaz. Void -> iade (asagida).
+  @OnEvent('order.item.sent', { async: true })
+  async handleOrderItemSent(event: any) {
+    const items: Array<{ productId: string; quantity: number; orderItemId: string }> =
+      event.payload?.items ?? [];
+    for (const it of items) {
+      const product = await this.prisma.product.findUnique({ where: { id: it.productId } });
+      if (!product || !product.trackStock) continue;
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-    });
+      this.logger.log(
+        `Received order.item.sent. Deducting stock for product: ${it.productId}, quantity: ${it.quantity}`,
+      );
 
-    if (!product || !product.trackStock) return;
-
-    this.logger.log(
-      `Received order.item.added. Deducting stock for product: ${productId}, quantity: ${quantity}`,
-    );
-
-    await this.prisma.stockMovement.create({
-      data: {
-        id: newId(),
-        branchId: event.branchId,
-        productId,
-        type: StockMovementType.Sale,
-        quantity: -quantity, // Azaltma için negatif değer
-        relatedOrderItemId: orderItemId,
-        createdBy: event.actorId || 'system',
-        occurredAt: new Date(),
-        deviceId: event.deviceId ?? null,
-      },
-    });
+      await this.prisma.stockMovement.create({
+        data: {
+          id: newId(),
+          branchId: event.branchId,
+          productId: it.productId,
+          type: StockMovementType.Sale,
+          quantity: -it.quantity, // Azaltma için negatif değer
+          relatedOrderItemId: it.orderItemId,
+          createdBy: event.actorId || 'system',
+          occurredAt: new Date(),
+          deviceId: event.deviceId ?? null,
+        },
+      });
+    }
   }
 
   @OnEvent('order.item.voided', { async: true })
