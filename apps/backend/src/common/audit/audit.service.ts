@@ -81,17 +81,34 @@ export class AuditService {
   }
 
   // Denetim kaydi okuma (raporlar > kayit gecmisi). Salt-okuma; en yeni ustte.
-  // Filtreler opsiyonel: entityType (urun/kategori/...), action (product.delete...).
+  // Filtreler opsiyonel: entityType, action, userId, tarih araligi (from/to).
+  // userId->displayName ayri sorguyla iliştirilir (AuditLog'da user iliskisi yok).
   async list(
     branchId: string,
-    opts: { entityType?: string; action?: string; limit?: number } = {},
+    opts: {
+      entityType?: string;
+      action?: string;
+      userId?: string;
+      from?: string;
+      to?: string;
+      limit?: number;
+    } = {},
   ) {
-    const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+    const limit = Math.min(Math.max(opts.limit ?? 200, 1), 2000);
+    const createdAt =
+      opts.from || opts.to
+        ? {
+            ...(opts.from ? { gte: new Date(opts.from) } : {}),
+            ...(opts.to ? { lte: new Date(opts.to) } : {}),
+          }
+        : undefined;
     const rows = await this.prisma.auditLog.findMany({
       where: {
         branchId,
         ...(opts.entityType ? { entityType: opts.entityType } : {}),
         ...(opts.action ? { action: opts.action } : {}),
+        ...(opts.userId ? { userId: opts.userId } : {}),
+        ...(createdAt ? { createdAt } : {}),
       },
       orderBy: { id: 'desc' }, // ULID monotonic -> en yeni
       take: limit,
@@ -108,6 +125,19 @@ export class AuditService {
         createdAt: true,
       },
     });
-    return rows;
+
+    // userId -> displayName eslemesi (silinmis kullanici olabilir -> userId fallback).
+    const userIds = [...new Set(rows.map((r) => r.userId).filter((v): v is string => !!v))];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, displayName: true },
+        })
+      : [];
+    const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+    return rows.map((r) => ({
+      ...r,
+      userName: r.userId ? (nameById.get(r.userId) ?? r.userId) : null,
+    }));
   }
 }
