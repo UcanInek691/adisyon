@@ -74,6 +74,27 @@ export class ReportsService {
     };
   }
 
+  // Gun sonu gecmisi: kapanmis kasa oturumlarini (her biri bir gun-sonu kaydi)
+  // saklanan Z rakamlariyla listeler. Recompute yok -> kapanista dondurulan
+  // beklenen/sayilan/fark aynen okunur. Detay icin getEndOfDay(businessDay).
+  async getEndOfDayHistory(user: AuthUser, limit = 90) {
+    const sessions = await this.prisma.cashSession.findMany({
+      where: { branchId: user.branchId, status: 'closed', deletedAt: null },
+      orderBy: { closedAt: 'desc' },
+      take: limit,
+    });
+    return sessions.map((s) => ({
+      id: s.id,
+      businessDay: s.businessDay,
+      openedAt: s.openedAt,
+      closedAt: s.closedAt,
+      openingFloatKurus: s.openingFloat,
+      expectedKurus: s.expectedAmount ?? 0,
+      countedKurus: s.countedAmount ?? 0,
+      differenceKurus: s.difference ?? 0,
+    }));
+  }
+
   async getDailySales(user: AuthUser, start: string, end: string) {
     const startDate = new Date(start);
     const endDate = new Date(end);

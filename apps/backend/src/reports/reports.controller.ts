@@ -43,6 +43,13 @@ export class ReportsController {
     return this.reportsService.getEndOfDay(user, date || '');
   }
 
+  // Gun sonu gecmisi: kapanmis kasa oturumlari (saklanan Z rakamlari).
+  @Get('end-of-day/history')
+  @RequirePermissions(Permission.ReportView)
+  getEndOfDayHistory(@CurrentUser() user: AuthUser) {
+    return this.reportsService.getEndOfDayHistory(user);
+  }
+
   @Get('customers/debt')
   @RequirePermissions(Permission.ReportView)
   getCustomerDebts(@CurrentUser() user: AuthUser) {

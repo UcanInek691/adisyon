@@ -79,4 +79,35 @@ export class AuditService {
       return hash;
     });
   }
+
+  // Denetim kaydi okuma (raporlar > kayit gecmisi). Salt-okuma; en yeni ustte.
+  // Filtreler opsiyonel: entityType (urun/kategori/...), action (product.delete...).
+  async list(
+    branchId: string,
+    opts: { entityType?: string; action?: string; limit?: number } = {},
+  ) {
+    const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+    const rows = await this.prisma.auditLog.findMany({
+      where: {
+        branchId,
+        ...(opts.entityType ? { entityType: opts.entityType } : {}),
+        ...(opts.action ? { action: opts.action } : {}),
+      },
+      orderBy: { id: 'desc' }, // ULID monotonic -> en yeni
+      take: limit,
+      select: {
+        id: true,
+        action: true,
+        entityType: true,
+        entityId: true,
+        userId: true,
+        oldValue: true,
+        newValue: true,
+        reason: true,
+        origin: true,
+        createdAt: true,
+      },
+    });
+    return rows;
+  }
 }
