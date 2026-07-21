@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatKurus } from '../lib/format';
 import type { CashSession } from '../lib/types';
+import { pickKasaPanel } from './kasa-panel';
 
 // TL metnini kurusa cevir (PaymentModal ile ayni kalip). Gecersizse NaN.
 const toKurus = (tl: string) => Math.round(parseFloat(tl.replace(',', '.')) * 100);
@@ -36,8 +37,11 @@ export default function KasaScreen() {
     qc.invalidateQueries({ queryKey: ['cash', 'active'] });
   };
 
-  const noSession =
-    session.isError && session.error instanceof ApiError && session.error.status === 404;
+  const panel = pickKasaPanel({
+    isError: session.isError,
+    errorStatus: session.error instanceof ApiError ? session.error.status : undefined,
+    hasData: !!session.data,
+  });
 
   return (
     <div className="flex h-full flex-col bg-slate-100">
@@ -53,9 +57,11 @@ export default function KasaScreen() {
 
         {session.isLoading && <p className="p-6 text-center text-slate-400">Yükleniyor…</p>}
 
-        {noSession && <OpenForm onDone={refresh} onError={fail} />}
+        {panel === 'open' && <OpenForm onDone={refresh} onError={fail} />}
 
-        {session.data && <ActiveSession session={session.data} onDone={refresh} onError={fail} />}
+        {panel === 'active' && session.data && (
+          <ActiveSession session={session.data} onDone={refresh} onError={fail} />
+        )}
       </div>
     </div>
   );
