@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { isAuthed } from './lib/api';
+import AppLayout from './components/AppLayout';
 import LoginScreen from './screens/LoginScreen';
 import TablesScreen from './screens/TablesScreen';
 import OrderScreen from './screens/OrderScreen';
@@ -14,7 +15,7 @@ import KullaniciScreen from './screens/KullaniciScreen';
 import OfflineReviewScreen from './screens/OfflineReviewScreen';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  return isAuthed() ? <>{children}</> : <Navigate to="/login" replace />;
+  return isAuthed() ? <AppLayout>{children}</AppLayout> : <Navigate to="/login" replace />;
 }
 
 export default function App() {

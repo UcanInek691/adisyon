@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, clearSession, getUser, hasPerm } from '../lib/api';
+import { api, getUser } from '../lib/api';
 import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus } from '../lib/format';
-import type { OfflineReview, Order, Table } from '../lib/types';
+import type { Order, Table } from '../lib/types';
 import SyncBadge from '../offline/SyncBadge';
 import { offlineOpenTable } from '../offline/actions';
 import { isOffline } from '../offline/engine';
@@ -36,14 +36,6 @@ export default function TablesScreen() {
     queryFn: () => draftAll(),
     refetchInterval: 2000,
   });
-  // Cakisan offline mutasyonlarin Owner onay sayisi. OFFLINE_DESIGN.md §8
-  const reviewCount = useQuery({
-    queryKey: ['offline-reviews', 'count'],
-    queryFn: async () => (await api<OfflineReview[]>('/offline-reviews')).length,
-    refetchInterval: 20_000,
-    enabled: hasPerm('order.cancel'),
-  });
-
   const openByTable = new Map<string, Order>();
   for (const o of openOrders.data ?? []) if (o.tableId) openByTable.set(o.tableId, o);
   const heldByTable = new Map<string, Order>();
@@ -82,96 +74,18 @@ export default function TablesScreen() {
     createOrder.mutate(t.id);
   }
 
-  function logout() {
-    clearSession();
-    nav('/login', { replace: true });
-  }
-
   const loading = halls.isLoading || tables.isLoading || openOrders.isLoading;
   const busy = createOrder.isPending || resumeOrder.isPending;
 
   return (
     <div className="min-h-full bg-slate-100">
-      <header className="flex items-center justify-between bg-white px-6 py-3 shadow">
+      <header className="flex items-center justify-between border-b bg-white px-6 py-3">
         <h1 className="text-xl font-bold text-slate-800">Masalar</h1>
         <div className="flex items-center gap-3 text-sm text-slate-500">
           <SyncBadge />
-          <span>{user?.displayName ?? user?.role ?? ''}</span>
-          {hasPerm('cash.manage') && (
-            <button
-              onClick={() => nav('/cash')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Kasa
-            </button>
-          )}
-          {hasPerm('debt.manage') && (
-            <button
-              onClick={() => nav('/customers')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Veresiye
-            </button>
-          )}
-          {hasPerm('finance.manage') && (
-            <button
-              onClick={() => nav('/finance')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Gelir/Gider
-            </button>
-          )}
-          {hasPerm('product.manage') && (
-            <button
-              onClick={() => nav('/menu')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Ürünler
-            </button>
-          )}
-          {hasPerm('table.manage') && (
-            <button
-              onClick={() => nav('/tables-admin')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Masa Yönetimi
-            </button>
-          )}
-          {hasPerm('user.manage') && (
-            <button
-              onClick={() => nav('/users')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Kullanıcılar
-            </button>
-          )}
-          {hasPerm('order.cancel') && (reviewCount.data ?? 0) > 0 && (
-            <button
-              onClick={() => nav('/offline-reviews')}
-              className="rounded-lg bg-orange-100 px-3 py-1 font-medium text-orange-700"
-            >
-              Offline Onay ({reviewCount.data})
-            </button>
-          )}
-          {(hasPerm('settings.manage') || hasPerm('backup.manage')) && (
-            <button
-              onClick={() => nav('/settings')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Ayarlar
-            </button>
-          )}
-          {hasPerm('report.view') && (
-            <button
-              onClick={() => nav('/report')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Gün Sonu
-            </button>
-          )}
-          <button onClick={logout} className="rounded-lg bg-slate-200 px-3 py-1 font-medium">
-            Çıkış
-          </button>
+          <span className="font-medium text-slate-600">
+            {user?.displayName ?? user?.role ?? ''}
+          </span>
         </div>
       </header>
 
