@@ -1,8 +1,15 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { newId, createDomainEvent, DomainEventName } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { EventBusService } from '../common/events/event-bus.service';
+import { DEFAULT_UNITS, DEFAULT_TAXES } from './catalog.defaults';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import type {
   CreateCategoryDto,
@@ -23,12 +30,54 @@ import type {
  * Para/oran integer (kurus/binde) -> DTO seviyesinde zorlanir (float yok).
  */
 @Injectable()
-export class CatalogService {
+export class CatalogService implements OnModuleInit {
+  private readonly logger = new Logger(CatalogService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly events: EventBusService,
   ) {}
+
+  // Acilista: birim/vergi tablosu bos olan her sube icin varsayilanlari ekle.
+  // Kok neden fix: urun formu birim+vergi zorunlu tutar; bunlar yoksa hicbir
+  // urun eklenemez. Idempotent (count===0 kontrolu) -> her acilista guvenli.
+  async onModuleInit(): Promise<void> {
+    const branches = await this.prisma.branch.findMany({ select: { id: true } });
+    for (const { id: branchId } of branches) {
+      await this.ensureBranchDefaults(branchId);
+    }
+  }
+
+  private async ensureBranchDefaults(branchId: string): Promise<void> {
+    const [unitCount, taxCount] = await Promise.all([
+      this.prisma.unit.count({ where: { branchId, deletedAt: null } }),
+      this.prisma.tax.count({ where: { branchId, deletedAt: null } }),
+    ]);
+    if (unitCount === 0) {
+      await this.prisma.unit.createMany({
+        data: DEFAULT_UNITS.map((u) => ({
+          id: newId(),
+          branchId,
+          name: u.name,
+          abbreviation: u.abbreviation,
+        })),
+      });
+      this.logger.log(`Varsayilan birimler eklendi (branch ${branchId})`);
+    }
+    if (taxCount === 0) {
+      await this.prisma.tax.createMany({
+        data: DEFAULT_TAXES.map((t) => ({
+          id: newId(),
+          branchId,
+          name: t.name,
+          ratePermille: t.ratePermille,
+          isDefault: t.isDefault ?? false,
+        })),
+      });
+      this.logger.log(`Varsayilan vergiler eklendi (branch ${branchId})`);
+    }
+  }
 
   // Mutasyonlarda yazilan ortak provenance alanlari.
   private provenance(user: AuthUser): { deviceId?: string } {
