@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus } from '../lib/format';
 import { downloadCsv } from '../lib/export';
 import { ENTITY_LABEL, actionLabel, entryName } from './report-audit';
 
@@ -23,6 +23,18 @@ interface EndOfDay {
   cash: { sessions: CashSession[]; differenceTotalKurus: number };
   expensesKurus: number;
   incomesKurus: number;
+}
+interface ShiftReport {
+  sessionId: string;
+  openedAt: string;
+  generatedAt: string;
+  openingFloatKurus: number;
+  sales: { count: number; grossKurus: number; discountKurus: number; netKurus: number };
+  payments: { method: string; totalKurus: number }[];
+  salesByType: { type: string; count: number; netKurus: number }[];
+  expensesKurus: number;
+  incomesKurus: number;
+  expectedCashKurus: number;
 }
 interface EodHistory {
   id: string;
@@ -88,14 +100,24 @@ const ORDER_TYPE_LABEL: Record<string, string> = {
   delivery: 'Paket (Kurye)',
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
-const daysAgo = (n: number) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+// LOCAL tarih (toISOString UTC'dir: TR'de gece 00-03 arasi gunu kaydirir).
+const localDay = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = () => localDay(new Date());
+const daysAgo = (n: number) => localDay(new Date(Date.now() - n * 86400000));
+// Is gunu: 06:00 oncesi dunun gunu (backend businessDay kurali ile ayni).
+const businessToday = () => {
+  const d = new Date();
+  if (d.getHours() < 6) d.setDate(d.getDate() - 1);
+  return localDay(d);
+};
 // Kuruş -> Türk Excel'i için virgüllü ondalık sayı (formatsız): 1500 -> "15,00".
 const tl = (kurus: number) => (kurus / 100).toFixed(2).replace('.', ',');
 const trDate = (iso: string) => new Date(iso).toLocaleString('tr-TR');
 
-type Tab = 'eod' | 'sales' | 'history' | 'debt' | 'audit';
+type Tab = 'eod' | 'shift' | 'sales' | 'history' | 'debt' | 'audit';
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'shift', label: 'Ara Rapor (X)' },
   { key: 'eod', label: 'Gün Sonu (Z)' },
   { key: 'sales', label: 'Satışlar' },
   { key: 'history', label: 'Gün Sonu Geçmişi' },
@@ -135,6 +157,7 @@ export default function ReportScreen() {
       </header>
 
       <main className="mx-auto max-w-2xl space-y-4 p-6 print:max-w-none print:p-0">
+        {tab === 'shift' && <ShiftTab />}
         {tab === 'eod' && <EodTab />}
         {tab === 'sales' && <SalesTab />}
         {tab === 'history' && <HistoryTab />}
@@ -209,7 +232,7 @@ function EodCloseModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
         body: { password },
       });
       if (!ok) throw new Error('Owner şifresi hatalı.');
-      const countedAmount = Math.round(parseFloat(countedTl.replace(',', '.') || '0') * 100);
+      const countedAmount = parseTlToKurus(countedTl || '0');
       await api('/cash/sessions/close', { method: 'POST', body: { countedAmount } });
     },
     onSuccess: onDone,
@@ -262,9 +285,93 @@ function EodCloseModal({ onClose, onDone }: { onClose: () => void; onDone: () =>
   );
 }
 
+// --- Ara Rapor (X): acik kasa oturumunun anlik ozeti (kasayi KAPATMAZ) ---
+function ShiftTab() {
+  const report = useQuery({
+    queryKey: ['shift'],
+    queryFn: () => api<ShiftReport | null>('/reports/shift'),
+    refetchInterval: 30_000,
+  });
+  const r = report.data;
+  const onCsv = () => {
+    if (!r) return;
+    const rows: (string | number)[][] = [
+      ['Oturum açılışı', trDate(r.openedAt)],
+      ['Fiş sayısı', r.sales.count],
+      ['Brüt', tl(r.sales.grossKurus)],
+      ['İndirim', tl(r.sales.discountKurus)],
+      ['Net ciro', tl(r.sales.netKurus)],
+      ...r.payments.map((p) => [METHOD_LABEL[p.method] ?? p.method, tl(p.totalKurus)]),
+      ['Gider', tl(r.expensesKurus)],
+      ['Gelir', tl(r.incomesKurus)],
+      ['Açılış kasası', tl(r.openingFloatKurus)],
+      ['Beklenen nakit', tl(r.expectedCashKurus)],
+    ];
+    downloadCsv(`ara_rapor_${today()}`, ['Kalem', 'Değer'], rows);
+  };
+
+  return (
+    <>
+      <Toolbar
+        title="Ara Rapor (X)"
+        subtitle={r ? `Oturum açılışı: ${trDate(r.openedAt)}` : 'Açık kasa oturumu yok'}
+        onCsv={onCsv}
+      />
+      <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-700 print:hidden">
+        Ara rapor kasayı <b>kapatmaz</b>. Gün sonunu kapatmak için Gün Sonu (Z) sekmesini kullanın.
+      </p>
+      {report.isLoading && <p className="text-slate-500">Yükleniyor…</p>}
+      {report.isError && <p className="text-red-600">Rapor alınamadı.</p>}
+      {!report.isLoading && !r && (
+        <p className="rounded-xl bg-white p-4 text-slate-500 shadow">
+          Açık kasa oturumu yok. Ara rapor için önce Kasa'dan oturum açın.
+        </p>
+      )}
+      {r && (
+        <>
+          <Card title="Satış">
+            <Line label="Fiş sayısı" value={String(r.sales.count)} />
+            <Line label="Brüt" value={formatKurus(r.sales.grossKurus)} />
+            <Line label="İndirim" value={`−${formatKurus(r.sales.discountKurus)}`} />
+            <Line label="Net ciro" value={formatKurus(r.sales.netKurus)} bold />
+          </Card>
+          <Card title="Ödeme (yönteme göre)">
+            {r.payments.length === 0 && <p className="text-slate-400">Ödeme yok</p>}
+            {r.payments.map((p) => (
+              <Line
+                key={p.method}
+                label={METHOD_LABEL[p.method] ?? p.method}
+                value={formatKurus(p.totalKurus)}
+              />
+            ))}
+          </Card>
+          <Card title="Satış tipi (salon / gel-al / paket)">
+            {r.salesByType.length === 0 && <p className="text-slate-400">Satış yok</p>}
+            {r.salesByType.map((t) => (
+              <Line
+                key={t.type}
+                label={`${ORDER_TYPE_LABEL[t.type] ?? t.type} (${t.count})`}
+                value={formatKurus(t.netKurus)}
+              />
+            ))}
+          </Card>
+          <Card title="Gider / Gelir">
+            <Line label="Gider" value={`−${formatKurus(r.expensesKurus)}`} />
+            <Line label="Gelir" value={formatKurus(r.incomesKurus)} />
+          </Card>
+          <Card title="Kasa (canlı)">
+            <Line label="Açılış kasası" value={formatKurus(r.openingFloatKurus)} />
+            <Line label="Beklenen nakit" value={formatKurus(r.expectedCashKurus)} bold />
+          </Card>
+        </>
+      )}
+    </>
+  );
+}
+
 function EodTab() {
   const qc = useQueryClient();
-  const [date, setDate] = useState(today());
+  const [date, setDate] = useState(businessToday());
   const [zOpen, setZOpen] = useState(false);
   const report = useQuery({
     queryKey: ['eod', date],
@@ -585,7 +692,7 @@ function DebtTab() {
     queryKey: ['customer-debt'],
     queryFn: () => api<CustomerDebt[]>('/reports/customers/debt'),
   });
-  const min = parseFloat(minTl.replace(',', '.'));
+  const min = parseTlToKurus(minTl) / 100;
   const rows = useMemo(
     () =>
       (q.data ?? []).filter(

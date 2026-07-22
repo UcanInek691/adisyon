@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { newId, CashTxnType } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,14 +9,42 @@ import type {
   CreateIncomeDto,
 } from './dto/finance.schemas';
 
+// Yeni kurulumda gider eklenebilmesi icin sart olan varsayilan kategoriler.
+// Gider formu kategori ZORUNLU tutar; hic kategori yoksa gider eklenemez
+// (kok neden). catalog.defaults ile ayni desen. Kullanici Ayarlar'dan ekler.
+const DEFAULT_EXPENSE_CATEGORIES = [
+  'Kira',
+  'Personel / Maaş',
+  'Elektrik / Su / Doğalgaz',
+  'Malzeme / Gıda Alımı',
+  'Bakım / Onarım',
+  'Diğer',
+];
+
 /**
  * Gelir/Gider modulu. Gider kategorileri + gider/gelir kaydi. affectsCash ise
  * acik kasa oturumuna isaretli hareket yazar (Gider -, Gelir +). Kasa kapaliysa
  * yalniz finans kaydi tutulur (cekmece etkilenmez).
  */
 @Injectable()
-export class FinanceService {
+export class FinanceService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
+
+  // Acilista: gider-kategorisi tablosu bos olan her sube icin varsayilanlari ekle
+  // (catalog.defaults birim/vergi ile ayni mantik). Idempotent (count===0).
+  async onModuleInit(): Promise<void> {
+    const branches = await this.prisma.branch.findMany({ select: { id: true } });
+    for (const { id: branchId } of branches) {
+      const count = await this.prisma.expenseCategory.count({
+        where: { branchId, deletedAt: null },
+      });
+      if (count === 0) {
+        await this.prisma.expenseCategory.createMany({
+          data: DEFAULT_EXPENSE_CATEGORIES.map((name) => ({ id: newId(), branchId, name })),
+        });
+      }
+    }
+  }
 
   createCategory(user: AuthUser, dto: CreateExpenseCategoryDto) {
     return this.prisma.expenseCategory.create({
