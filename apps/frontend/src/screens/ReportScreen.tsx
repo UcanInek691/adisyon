@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { formatKurus } from '../lib/format';
 import { downloadCsv } from '../lib/export';
 import { ENTITY_LABEL, actionLabel, entryName } from './report-audit';
@@ -19,6 +19,7 @@ interface EndOfDay {
   businessDay: string;
   sales: { count: number; grossKurus: number; discountKurus: number; netKurus: number };
   payments: { method: string; totalKurus: number }[];
+  salesByType: { type: string; count: number; netKurus: number }[];
   cash: { sessions: CashSession[]; differenceTotalKurus: number };
   expensesKurus: number;
   incomesKurus: number;
@@ -37,6 +38,14 @@ interface DailySales {
   salesTotalKurus: number;
   discountTotalKurus: number;
   payments: { method: string; totalKurus: number }[];
+  salesByType: { type: string; count: number; netKurus: number }[];
+  receipts: {
+    receiptNo: string;
+    type: string;
+    orderNo: string;
+    printedAt: string;
+    totalKurus: number;
+  }[];
   categoryBreakdown: { category: string; totalKurus: number }[];
 }
 interface ProductSales {
@@ -71,6 +80,12 @@ const METHOD_LABEL: Record<string, string> = {
   transfer: 'Havale',
   qr: 'QR',
   debt: 'Veresiye',
+};
+
+const ORDER_TYPE_LABEL: Record<string, string> = {
+  dine_in: 'Salon (Masa)',
+  takeaway: 'Gel-Al',
+  delivery: 'Paket (Kurye)',
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -180,8 +195,77 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputCls = 'rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-700';
 
 // --- Gün Sonu (Z): tek iş günü ---
+// Gün sonu (Z) alma: owner şifresi onayı + sayılan nakit ile kasa oturumunu
+// kapatır. Kapanış Z rakamlarını (beklenen/sayılan/fark) sisteme kaydeder.
+function EodCloseModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [password, setPassword] = useState('');
+  const [countedTl, setCountedTl] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      const { ok } = await api<{ ok: boolean }>('/auth/verify-owner', {
+        method: 'POST',
+        body: { password },
+      });
+      if (!ok) throw new Error('Owner şifresi hatalı.');
+      const countedAmount = Math.round(parseFloat(countedTl.replace(',', '.') || '0') * 100);
+      await api('/cash/sessions/close', { method: 'POST', body: { countedAmount } });
+    },
+    onSuccess: onDone,
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Hata.'),
+  });
+
+  const valid = password.trim() !== '' && countedTl.trim() !== '';
+
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <h2 className="mb-1 text-lg font-bold text-slate-800">Gün Sonu (Z) Al</h2>
+        <p className="mb-4 text-sm text-slate-500">
+          Kasa oturumu kapatılır ve Z rakamları kaydedilir. Owner şifresi gerekir.
+        </p>
+        <label className="mb-1 block text-sm font-medium text-slate-600">Sayılan nakit (TL)</label>
+        <input
+          value={countedTl}
+          onChange={(e) => setCountedTl(e.target.value)}
+          inputMode="decimal"
+          placeholder="0,00"
+          className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-3 text-lg"
+        />
+        <label className="mb-1 block text-sm font-medium text-slate-600">Owner şifresi</label>
+        <input
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          type="password"
+          className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-3 text-lg"
+        />
+        {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={onClose} className="rounded-lg bg-slate-200 py-3 font-semibold">
+            Vazgeç
+          </button>
+          <button
+            onClick={() => {
+              setError('');
+              submit.mutate();
+            }}
+            disabled={!valid || submit.isPending}
+            className="rounded-lg bg-red-600 py-3 font-semibold text-white disabled:opacity-40"
+          >
+            {submit.isPending ? 'Kapatılıyor…' : 'Onayla ve Kapat'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EodTab() {
+  const qc = useQueryClient();
   const [date, setDate] = useState(today());
+  const [zOpen, setZOpen] = useState(false);
   const report = useQuery({
     queryKey: ['eod', date],
     queryFn: () => api<EndOfDay>(`/reports/end-of-day?date=${date}`),
@@ -212,7 +296,23 @@ function EodTab() {
             className={inputCls}
           />
         </Field>
+        <button
+          onClick={() => setZOpen(true)}
+          className="self-end rounded-lg bg-red-600 px-4 py-2 font-semibold text-white shadow-sm"
+        >
+          Gün Sonu (Z) Al
+        </button>
       </Toolbar>
+      {zOpen && (
+        <EodCloseModal
+          onClose={() => setZOpen(false)}
+          onDone={() => {
+            setZOpen(false);
+            qc.invalidateQueries({ queryKey: ['eod'] });
+            qc.invalidateQueries({ queryKey: ['eod-history'] });
+          }}
+        />
+      )}
       {report.isLoading && <p className="text-slate-500">Yükleniyor…</p>}
       {report.isError && <p className="text-red-600">Rapor alınamadı.</p>}
       {r && (
@@ -230,6 +330,16 @@ function EodTab() {
                 key={p.method}
                 label={METHOD_LABEL[p.method] ?? p.method}
                 value={formatKurus(p.totalKurus)}
+              />
+            ))}
+          </Card>
+          <Card title="Satış tipi (salon / gel-al / paket)">
+            {(r.salesByType ?? []).length === 0 && <p className="text-slate-400">Satış yok</p>}
+            {(r.salesByType ?? []).map((t) => (
+              <Line
+                key={t.type}
+                label={`${ORDER_TYPE_LABEL[t.type] ?? t.type} (${t.count})`}
+                value={formatKurus(t.netKurus)}
               />
             ))}
           </Card>
@@ -327,10 +437,46 @@ function SalesTab() {
               />
             ))}
           </Card>
+          <Card title="Satış tipi (salon / gel-al / paket)">
+            {(d.salesByType ?? []).length === 0 && <p className="text-slate-400">Satış yok</p>}
+            {(d.salesByType ?? []).map((t) => (
+              <Line
+                key={t.type}
+                label={`${ORDER_TYPE_LABEL[t.type] ?? t.type} (${t.count})`}
+                value={formatKurus(t.netKurus)}
+              />
+            ))}
+          </Card>
           <Card title="Kategori kırılımı">
             {d.categoryBreakdown.length === 0 && <p className="text-slate-400">Veri yok</p>}
             {d.categoryBreakdown.map((c) => (
               <Line key={c.category} label={c.category} value={formatKurus(c.totalKurus)} />
+            ))}
+          </Card>
+          <Card title="Basılan fişler (Hesap / Ödendi)">
+            {(d.receipts ?? []).length === 0 && <p className="text-slate-400">Fiş yok</p>}
+            {(d.receipts ?? []).map((r) => (
+              <div key={r.receiptNo} className="flex items-center justify-between py-1 text-sm">
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+                      r.type === 'bill'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-green-100 text-green-700'
+                    }`}
+                  >
+                    {r.type === 'bill' ? 'Hesap' : 'Ödendi'}
+                  </span>
+                  <span className="text-slate-600">#{r.orderNo}</span>
+                  <span className="text-slate-400">
+                    {new Date(r.printedAt).toLocaleTimeString('tr-TR', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </span>
+                <span className="font-medium text-slate-700">{formatKurus(r.totalKurus)}</span>
+              </div>
             ))}
           </Card>
         </>

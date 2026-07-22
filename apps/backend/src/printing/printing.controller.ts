@@ -82,4 +82,11 @@ export class PrintingController {
     );
     return { success: true, jobId };
   }
+
+  // Ödeme öncesi hesap/adisyon fişi (talep üzerine). Fiş 'bill' olarak kaydedilir.
+  @Post('order/:id/bill')
+  @RequirePermissions(Permission.OrderCreate)
+  async printBill(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.printingService.printBill(user, id);
+  }
 }

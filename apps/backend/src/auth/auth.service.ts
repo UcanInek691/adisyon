@@ -133,6 +133,26 @@ export class AuthService {
     return this.issue(user, undefined, meta);
   }
 
+  // --- Owner sifre onayi (gun sonu vb. kritik islemler icin) -----------------
+  // Kim tetiklerse tetiklesin, subedeki owner rolundeki bir kullanicinin
+  // sifresi dogrulanir. Oturum acmaz; yalniz onay.
+  async verifyOwner(branchId: string, password: string): Promise<{ ok: boolean }> {
+    const owners = await this.prisma.user.findMany({
+      where: {
+        branchId,
+        isActive: true,
+        deletedAt: null,
+        passwordHash: { not: null },
+        role: { name: SystemRole.Owner, isSystem: true },
+      },
+      select: { passwordHash: true },
+    });
+    for (const o of owners) {
+      if (o.passwordHash && (await argonVerify(o.passwordHash, password))) return { ok: true };
+    }
+    return { ok: false };
+  }
+
   // --- Waiter: PIN (+ deviceId) ----------------------------------------------
   async loginPin(dto: LoginPinDto, meta: RequestMeta): Promise<AuthResult> {
     const candidates = await this.prisma.user.findMany({

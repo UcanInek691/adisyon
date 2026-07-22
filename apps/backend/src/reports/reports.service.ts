@@ -33,6 +33,19 @@ export class ReportsService {
       _sum: { amount: true },
     });
 
+    // Satis tipine gore (salon / gel-al / paket) kirilim.
+    const salesByType = await this.prisma.order.groupBy({
+      by: ['type'],
+      where: {
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _count: { id: true },
+      _sum: { grandTotal: true },
+    });
+
     const sessions = await this.prisma.cashSession.findMany({
       where: { branchId: user.branchId, businessDay: day, deletedAt: null },
       orderBy: { openedAt: 'asc' },
@@ -56,6 +69,11 @@ export class ReportsService {
         netKurus: ordersSummary._sum.grandTotal || 0,
       },
       payments: paymentsByMethod.map((p) => ({ method: p.method, totalKurus: p._sum.amount || 0 })),
+      salesByType: salesByType.map((t) => ({
+        type: t.type,
+        count: t._count.id || 0,
+        netKurus: t._sum.grandTotal || 0,
+      })),
       cash: {
         sessions: sessions.map((s) => ({
           id: s.id,
@@ -122,6 +140,32 @@ export class ReportsService {
       _sum: { amount: true },
     });
 
+    // Satis tipine gore (salon / gel-al / paket) kirilim.
+    const salesByType = await this.prisma.order.groupBy({
+      by: ['type'],
+      where: {
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: startDate, lte: endDate },
+        deletedAt: null,
+      },
+      _count: { id: true },
+      _sum: { grandTotal: true },
+    });
+
+    // Basilan fisler (hesap fisi 'bill' + odendi fisi 'customer') — geri donup bakmak icin.
+    const receipts = await this.prisma.receipt.findMany({
+      where: {
+        order: { branchId: user.branchId },
+        type: { in: ['bill', 'customer'] },
+        printedAt: { gte: startDate, lte: endDate },
+        deletedAt: null,
+      },
+      include: { order: { select: { orderNo: true, grandTotal: true } } },
+      orderBy: { printedAt: 'desc' },
+      take: 200,
+    });
+
     // Sales by product categories
     const items = await this.prisma.orderItem.findMany({
       where: {
@@ -152,6 +196,18 @@ export class ReportsService {
       payments: paymentsByMethod.map((p) => ({
         method: p.method,
         totalKurus: p._sum.amount || 0,
+      })),
+      salesByType: salesByType.map((t) => ({
+        type: t.type,
+        count: t._count.id || 0,
+        netKurus: t._sum.grandTotal || 0,
+      })),
+      receipts: receipts.map((r) => ({
+        receiptNo: r.receiptNo,
+        type: r.type, // bill (Hesap) | customer (Ödendi)
+        orderNo: r.order.orderNo,
+        printedAt: r.printedAt.toISOString(),
+        totalKurus: r.order.grandTotal,
       })),
       categoryBreakdown: Object.entries(categoryBreakdown).map(([category, totalKurus]) => ({
         category,

@@ -105,6 +105,11 @@ export default function OrderScreen() {
     },
     onError: fail,
   });
+  // Ödeme öncesi hesap/adisyon fişi (bilgi fişi). Ödeme almaz.
+  const printBill = useMutation({
+    mutationFn: () => api(`/printers/order/${id}/bill`, { method: 'POST' }),
+    onError: fail,
+  });
   const o = order.data;
   // Sync sonrasi taslak gercek order id kazandi -> sunucu adisyonuna gec, taslagi sil.
   useEffect(() => {
@@ -139,6 +144,16 @@ export default function OrderScreen() {
               ←
             </button>
             <span className="text-lg font-bold text-slate-800">Adisyon {o?.orderNo ?? ''}</span>
+            {o?.type === 'delivery' && (
+              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
+                🛵 Paket
+              </span>
+            )}
+            {o?.type === 'takeaway' && (
+              <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-700">
+                🥡 Gel-Al
+              </span>
+            )}
             <SyncBadge />
           </div>
           {o?.status === 'open' && o.tableId && !local && (
@@ -265,6 +280,13 @@ export default function OrderScreen() {
               Beklet
             </button>
           </div>
+          <button
+            onClick={() => printBill.mutate()}
+            disabled={busy || local || printBill.isPending || !o || (o?.items ?? []).length === 0}
+            className="mb-2 w-full rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
+          >
+            🧾 {printBill.isPending ? 'Yazdırılıyor…' : 'Hesap Yazdır'}
+          </button>
           <div className={`grid gap-2 ${canPay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <button
               data-testid="send-kitchen"

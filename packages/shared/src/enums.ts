@@ -33,6 +33,13 @@ export const OrderStatus = {
 } as const;
 export type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus];
 
+export const OrderType = {
+  DineIn: 'dine_in', // salon (masa)
+  Takeaway: 'takeaway', // gel-al
+  Delivery: 'delivery', // paket / kurye
+} as const;
+export type OrderType = (typeof OrderType)[keyof typeof OrderType];
+
 export const OrderItemStatus = {
   Pending: 'pending',
   Sent: 'sent',

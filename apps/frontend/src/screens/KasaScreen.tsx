@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
 import { formatKurus } from '../lib/format';
-import type { CashSession } from '../lib/types';
+import type { CashSession, Order } from '../lib/types';
+import { readOpenOrders, readTables } from '../offline/read';
 import { pickKasaPanel } from './kasa-panel';
 
 // TL metnini kurusa cevir (PaymentModal ile ayni kalip). Gecersizse NaN.
@@ -52,17 +53,62 @@ export default function KasaScreen() {
         <h1 className="text-lg font-bold text-slate-800">Kasa</h1>
       </header>
 
-      <div className="mx-auto w-full max-w-md flex-1 overflow-auto p-4">
+      <div className="mx-auto w-full max-w-6xl flex-1 overflow-auto p-4">
         {error && <p className="mb-3 rounded-lg bg-red-50 p-2 text-sm text-red-600">{error}</p>}
 
         {session.isLoading && <p className="p-6 text-center text-slate-400">Yükleniyor…</p>}
 
-        {panel === 'open' && <OpenForm onDone={refresh} onError={fail} />}
-
-        {panel === 'active' && session.data && (
-          <ActiveSession session={session.data} onDone={refresh} onError={fail} />
-        )}
+        {/* Yatay düzen: solda kasa oturumu, sağda açık adisyonlar */}
+        <div className="grid items-start gap-6 lg:grid-cols-2">
+          <div>
+            {panel === 'open' && <OpenForm onDone={refresh} onError={fail} />}
+            {panel === 'active' && session.data && (
+              <ActiveSession session={session.data} onDone={refresh} onError={fail} />
+            )}
+          </div>
+          <OpenOrdersPanel />
+        </div>
       </div>
+    </div>
+  );
+}
+
+// Kasadan açık masalara/adisyonlara erişim: tıkla → sipariş ekranı (kalem
+// ekle/çıkar orada, her şey sisteme kaydedilir).
+function OpenOrdersPanel() {
+  const nav = useNavigate();
+  const orders = useQuery({
+    queryKey: ['orders', 'open'],
+    queryFn: readOpenOrders,
+    refetchInterval: 15_000,
+  });
+  const tables = useQuery({ queryKey: ['tables', 'active'], queryFn: readTables });
+  const tableName = (id: string) => tables.data?.find((t) => t.id === id)?.name ?? 'Masa';
+  const label = (o: Order) =>
+    o.tableId ? tableName(o.tableId) : o.type === 'delivery' ? '🛵 Paket' : '🥡 Gel-Al';
+  const list = orders.data ?? [];
+
+  return (
+    <div className="mt-6">
+      <h2 className="mb-2 text-sm font-semibold text-slate-500">Açık Adisyonlar</h2>
+      {list.length === 0 ? (
+        <p className="rounded-lg bg-white p-4 text-center text-sm text-slate-400 shadow-sm">
+          Açık adisyon yok
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          {list.map((o) => (
+            <button
+              key={o.id}
+              onClick={() => nav(`/orders/${o.id}`)}
+              className="flex flex-col items-start rounded-xl bg-white p-3 text-left shadow-sm transition active:scale-95"
+            >
+              <span className="font-semibold text-slate-800">{label(o)}</span>
+              <span className="mt-1 text-sm text-slate-500">{formatKurus(o.grandTotal)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -110,7 +156,7 @@ function ActiveSession({
   onDone: () => void;
   onError: (e: unknown) => void;
 }) {
-  const [dir, setDir] = useState<'payout' | 'income'>('payout');
+  const [dir, setDir] = useState<'payout' | 'income'>('income');
   const [amountTl, setAmountTl] = useState('');
   const [note, setNote] = useState('');
   const [countTl, setCountTl] = useState('');
@@ -172,16 +218,16 @@ function ActiveSession({
         <h2 className="mb-3 font-bold text-slate-800">Kasa Hareketi</h2>
         <div className="mb-3 grid grid-cols-2 gap-2">
           <button
-            onClick={() => setDir('payout')}
-            className={`rounded-lg py-2 font-semibold ${dir === 'payout' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600'}`}
-          >
-            Para Çıkışı
-          </button>
-          <button
             onClick={() => setDir('income')}
             className={`rounded-lg py-2 font-semibold ${dir === 'income' ? 'bg-green-600 text-white' : 'bg-slate-100 text-slate-600'}`}
           >
             Para Girişi
+          </button>
+          <button
+            onClick={() => setDir('payout')}
+            className={`rounded-lg py-2 font-semibold ${dir === 'payout' ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+          >
+            Para Çıkışı
           </button>
         </div>
         <input
