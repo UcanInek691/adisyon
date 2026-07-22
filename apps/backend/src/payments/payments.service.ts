@@ -75,7 +75,9 @@ export class PaymentsService {
             message: 'Adisyon zaten tamamen odendi.',
           });
         }
-        if (dto.amount > remaining) {
+        // Kalandan fazla tahsilat: normalde engellenir; kullanici acikca
+        // onayladiginda (allowOverpay) uyari ile devam edilebilir.
+        if (dto.amount > remaining && !dto.allowOverpay) {
           throw new BadRequestException({
             code: 'BILL_OVERPAY',
             message: `Odeme tutari kalan bakiyeyi (${remaining}) asamaz.`,

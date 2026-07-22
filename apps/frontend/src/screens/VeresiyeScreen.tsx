@@ -83,6 +83,7 @@ function CustomerDetail({ customerId }: { customerId: string }) {
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [csvBusy, setCsvBusy] = useState(false);
+  const [overpayAck, setOverpayAck] = useState(false);
 
   const detail = useQuery({
     queryKey: ['customer', customerId],
@@ -93,13 +94,19 @@ function CustomerDetail({ customerId }: { customerId: string }) {
     setAmountTl('');
     setNote('');
     setError('');
+    setOverpayAck(false);
     qc.invalidateQueries({ queryKey: ['customer', customerId] });
     qc.invalidateQueries({ queryKey: ['customers'] });
   };
   const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'İşlem başarısız.');
 
   const submit = useMutation({
-    mutationFn: (body: { amount: number; method?: string; note?: string }) =>
+    mutationFn: (body: {
+      amount: number;
+      method?: string;
+      note?: string;
+      allowOverpay?: boolean;
+    }) =>
       api(`/customers/${customerId}/${mode === 'debt' ? 'debt' : 'payment'}`, {
         method: 'POST',
         body,
@@ -109,11 +116,16 @@ function CustomerDetail({ customerId }: { customerId: string }) {
   });
 
   const kurus = toKurus(amountTl);
-  const valid = amountTl.trim() !== '' && Number.isFinite(kurus) && kurus > 0;
+  const curBalance = detail.data?.debtAccount?.balance ?? 0;
+  // Tahsilatta borctan fazla tahsil ediliyorsa uyari + onay gerekir.
+  const isOverpay = mode === 'payment' && Number.isFinite(kurus) && kurus > curBalance;
+  const valid =
+    amountTl.trim() !== '' && Number.isFinite(kurus) && kurus > 0 && (!isOverpay || overpayAck);
   const doSubmit = () =>
     submit.mutate({
       amount: kurus,
       ...(mode === 'payment' ? { method } : {}),
+      ...(isOverpay ? { allowOverpay: true } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
     });
 
@@ -211,6 +223,20 @@ function CustomerDetail({ customerId }: { customerId: string }) {
           placeholder="Açıklama (isteğe bağlı)"
           className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2"
         />
+        {isOverpay && (
+          <label className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+            <input
+              type="checkbox"
+              checked={overpayAck}
+              onChange={(e) => setOverpayAck(e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>
+              Güncel borçtan <b>{formatKurus(kurus - curBalance)}</b> fazla tahsilat yapılıyor.
+              Onaylıyorum.
+            </span>
+          </label>
+        )}
         {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
         <button
           onClick={doSubmit}

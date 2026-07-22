@@ -24,5 +24,6 @@ export const payDebtSchema = z.object({
   amount: z.number().int().positive(), // kurus
   method: z.nativeEnum(PaymentMethod),
   note: z.string().nullish(),
+  allowOverpay: z.boolean().optional(), // borctan fazla tahsilat -> kullanici onayi ile
 });
 export type PayDebtDto = z.infer<typeof payDebtSchema>;

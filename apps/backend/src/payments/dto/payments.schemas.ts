@@ -10,6 +10,7 @@ export const recordPaymentSchema = z
     received: z.number().int().nonnegative().optional(), // nakit verilen (para ustu icin)
     reference: z.string().nullish(), // kart/havale ref
     customerId: z.string().min(1).optional(), // veresiye (method='debt') icin zorunlu
+    allowOverpay: z.boolean().optional(), // kalandan fazla tahsilat -> kullanici onayi ile
     idempotencyKey: z.string().min(1), // ULID (offline idempotency)
   })
   .refine((d) => d.method !== PaymentMethod.Debt || !!d.customerId, {

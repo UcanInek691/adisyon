@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { newId, DebtTxnType, CashTxnType } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -190,6 +190,15 @@ export class CustomerService {
       include: { customer: true },
     });
     if (!account) throw new NotFoundException('Müşteri veresiye hesabı bulunamadı.');
+
+    // Borctan fazla tahsilat: normalde engellenir; kullanici acikca onayladiginda
+    // (allowOverpay) uyari ile devam edilebilir -> bakiye eksiye (alacak) doner.
+    if (dto.amount > account.balance && !dto.allowOverpay) {
+      throw new BadRequestException({
+        code: 'BILL_OVERPAY',
+        message: `Tahsilat tutari kalan borcu (${account.balance}) asamaz.`,
+      });
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // 1. Borç ödemesini kaydet
