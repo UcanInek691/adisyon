@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { hash as argonHash } from '@node-rs/argon2';
+import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
 import { newId, SystemRole } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
@@ -29,6 +29,29 @@ export class UsersService {
     }));
   }
 
+  // PIN girisi kullanici adi SORMAZ (loginPin ilk eslesen hash'i alir) -> ayni
+  // PIN iki kiside olursa yanlis kisi adina giris olur. Atama aninda engelle.
+  // ponytail: argon dogrulama O(kullanici sayisi); kucuk isletme kadrosunda sorun degil.
+  private async assertPinUnique(pin: string, excludeUserId?: string): Promise<void> {
+    const others = await this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        pinHash: { not: null },
+        ...(excludeUserId ? { id: { not: excludeUserId } } : {}),
+      },
+      select: { pinHash: true },
+    });
+    for (const o of others) {
+      if (o.pinHash && (await argonVerify(o.pinHash, pin))) {
+        throw new ConflictException({
+          code: 'PIN_TAKEN',
+          message: 'Bu PIN başka bir kullanıcıda kayıtlı; farklı bir PIN seçin.',
+        });
+      }
+    }
+  }
+
   async create(user: AuthUser, dto: CreateUserDto) {
     const roleName = dto.role === 'owner' ? SystemRole.Owner : SystemRole.Waiter;
     const role = await this.prisma.role.findFirst({
@@ -43,6 +66,8 @@ export class UsersService {
         message: 'Bu kullanıcı adı zaten kullanılıyor.',
       });
     }
+
+    if (dto.pin) await this.assertPinUnique(dto.pin);
 
     const created = await this.prisma.user.create({
       data: {
@@ -70,6 +95,8 @@ export class UsersService {
       }
       await this.assertNotLastActiveOwner(target.id, target.roleId);
     }
+
+    if (dto.pin) await this.assertPinUnique(dto.pin, target.id);
 
     await this.prisma.user.update({
       where: { id },

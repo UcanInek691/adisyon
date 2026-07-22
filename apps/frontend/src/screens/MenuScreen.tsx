@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus as toKurus } from '../lib/format';
 import type { Category, Product, Tax, Unit } from '../lib/types';
 
-const toKurus = (tl: string) => Math.round(parseFloat(tl.replace(',', '.')) * 100);
 
 export default function MenuScreen() {
   const nav = useNavigate();
@@ -183,7 +182,7 @@ function CatalogSettingsModal({
       api('/taxes', {
         method: 'POST',
         // Yuzde -> binde (ratePermille). %10 -> 100.
-        body: { name: taxName.trim(), ratePermille: Math.round(parseFloat(taxPct) * 10) },
+        body: { name: taxName.trim(), ratePermille: Math.round(parseFloat(taxPct.replace(',', '.')) * 10) },
       }),
     onSuccess: () => {
       setTaxName('');
@@ -200,7 +199,7 @@ function CatalogSettingsModal({
   });
 
   const unitValid = unitName.trim() !== '';
-  const taxValid = taxName.trim() !== '' && parseFloat(taxPct) >= 0;
+  const taxValid = taxName.trim() !== '' && parseFloat(taxPct.replace(',', '.')) >= 0;
 
   return (
     <Modal title="Birim ve Vergiler" onClose={onClose}>

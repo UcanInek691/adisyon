@@ -1,15 +1,39 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { Prisma } from '@prisma/client';
 import { newId, CashTxnType } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import type { OpenSessionDto, CloseSessionDto, CreateCashTransactionDto } from './dto/cash.schemas';
+import { businessDayOf } from '../reports/reports.calc';
 
 @Injectable()
-export class CashService {
+export class CashService implements OnModuleInit {
   private readonly logger = new Logger(CashService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  // DB kisiti: sube basina TEK acik oturum. openSession'daki check-then-create
+  // yarisini veritabani seviyesinde kapatir (Prisma parcali index desteklemez,
+  // runtime migrate de yok -> IF NOT EXISTS ile mevcut kurulumlara da ulasir).
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.prisma.$executeRawUnsafe(
+        `CREATE UNIQUE INDEX IF NOT EXISTS "uq_cash_sessions_one_open"
+         ON "cash_sessions"("branch_id") WHERE "status" = 'open' AND "deleted_at" IS NULL`,
+      );
+    } catch (e) {
+      // Mevcut veride zaten cift acik oturum varsa index kurulamaz; uygulama
+      // calismaya devam eder (eski davranis), sadece uyari loglanir.
+      this.logger.warn(`Tek-acik-oturum index'i kurulamadi: ${(e as Error).message}`);
+    }
+  }
 
   // ===========================================================================
   // Cash Session Management
@@ -23,45 +47,52 @@ export class CashService {
     }
 
     const id = newId();
-    // İş günü saati (06:00 sınırına göre business day).
-    // Örnek: Gece 02:00 ise dünün tarihi iş günü kabul edilir.
+    // İş günü (06:00 kuralı, LOCAL tarih) — reports.calc ile ayni tanim.
     const now = new Date();
-    const currentHour = now.getHours();
-    const businessDate = new Date(now);
-    if (currentHour < 6) {
-      businessDate.setDate(businessDate.getDate() - 1);
+    const businessDay = businessDayOf(now);
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const session = await tx.cashSession.create({
+          data: {
+            id,
+            branchId: user.branchId,
+            sessionDevice: user.deviceId || 'main-terminal',
+            openedBy: user.userId,
+            openedAt: now,
+            openingFloat: dto.openingFloat,
+            status: 'open',
+            businessDay,
+          },
+        });
+
+        // Açılış işlemi için kasa hareketi kaydı (Opening transaction)
+        await tx.cashTransaction.create({
+          data: {
+            id: newId(),
+            cashSessionId: id,
+            type: CashTxnType.Opening,
+            amount: dto.openingFloat,
+            method: 'cash',
+            createdBy: user.userId,
+            note: 'Kasa açılış bakiyesi',
+          },
+        });
+
+        return session;
+      });
+    } catch (e) {
+      // Yaris: iki es zamanli acilis da findFirst'u gecebilir; ikincisi
+      // uq_cash_sessions_one_open index'ine takilir -> ayni dostane hata.
+      // (Sema-disi raw index'te Prisma P2002 yerine ham SQLite hatasi da verebilir.)
+      const unique =
+        (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') ||
+        /UNIQUE constraint failed/i.test(e instanceof Error ? e.message : '');
+      if (unique) {
+        throw new ConflictException('Zaten açık bir kasa oturumu mevcut.');
+      }
+      throw e;
     }
-    const businessDay = businessDate.toISOString().split('T')[0] ?? '';
-
-    return this.prisma.$transaction(async (tx) => {
-      const session = await tx.cashSession.create({
-        data: {
-          id,
-          branchId: user.branchId,
-          sessionDevice: user.deviceId || 'main-terminal',
-          openedBy: user.userId,
-          openedAt: now,
-          openingFloat: dto.openingFloat,
-          status: 'open',
-          businessDay,
-        },
-      });
-
-      // Açılış işlemi için kasa hareketi kaydı (Opening transaction)
-      await tx.cashTransaction.create({
-        data: {
-          id: newId(),
-          cashSessionId: id,
-          type: CashTxnType.Opening,
-          amount: dto.openingFloat,
-          method: 'cash',
-          createdBy: user.userId,
-          note: 'Kasa açılış bakiyesi',
-        },
-      });
-
-      return session;
-    });
   }
 
   async closeSession(user: AuthUser, dto: CloseSessionDto) {

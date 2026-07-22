@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError, getAccess } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus as toKurus } from '../lib/format';
 import type { Customer } from '../lib/types';
 
-const toKurus = (tl: string) => Math.round(parseFloat(tl.replace(',', '.')) * 100);
 
 export default function VeresiyeScreen() {
   const nav = useNavigate();

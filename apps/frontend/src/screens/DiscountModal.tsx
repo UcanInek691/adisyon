@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus } from '../lib/format';
 import type { Discount } from '../lib/types';
 
 // Adisyon-seviyesi indirim: yuzde (1-100) veya tutar (TL). >%10 backend'de
@@ -29,7 +29,7 @@ export default function DiscountModal({
       const v =
         type === 'percent'
           ? Math.round(parseFloat(value.replace(',', '.')))
-          : Math.round(parseFloat(value.replace(',', '.')) * 100);
+          : parseTlToKurus(value);
       return api(`/orders/${orderId}/discounts`, { method: 'POST', body: { type, value: v } });
     },
     onSuccess: () => {

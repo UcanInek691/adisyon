@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus } from '../lib/format';
 import type { Customer, Order, Payment } from '../lib/types';
 
 const METHODS: { key: string; label: string }[] = [
@@ -46,7 +46,7 @@ export default function PaymentModal({
   const remaining = Math.max(0, grandTotal - paid);
   // Girilen tutar yoksa kalanin tamami varsayilir.
   const amountKurus = amountTl.trim()
-    ? Math.round(parseFloat(amountTl.replace(',', '.')) * 100)
+    ? parseTlToKurus(amountTl)
     : remaining;
   const isOverpay = amountKurus > remaining;
 
