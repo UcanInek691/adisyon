@@ -3,7 +3,14 @@
 import { app, BrowserWindow, dialog } from 'electron';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  createWriteStream,
+} from 'node:fs';
 import { randomBytes } from 'node:crypto';
 
 const PORT = process.env.API_PORT || '3001';
@@ -47,6 +54,11 @@ function startBackend() {
   const base = app.isPackaged
     ? join(process.resourcesPath, 'backend')
     : join(import.meta.dirname, '..', 'backend');
+
+  const logStream = createWriteStream(join(app.getPath('userData'), 'backend-error.log'), {
+    flags: 'a',
+  });
+
   // ELECTRON_RUN_AS_NODE: electron.exe'yi duz node olarak kullan (sistemde node gerekmez).
   backend = spawn(process.execPath, [join(base, 'dist', 'main.js')], {
     env: {
@@ -54,8 +66,11 @@ function startBackend() {
       ...(app.isPackaged ? packagedEnv() : {}),
       ELECTRON_RUN_AS_NODE: '1',
     },
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+
+  backend.stdout.pipe(logStream);
+  backend.stderr.pipe(logStream);
 }
 
 async function waitUp(timeoutMs) {
