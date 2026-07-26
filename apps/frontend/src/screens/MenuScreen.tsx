@@ -2,16 +2,16 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus as toKurus } from '../lib/format';
 import type { Category, Product, Tax, Unit } from '../lib/types';
 
-const toKurus = (tl: string) => Math.round(parseFloat(tl.replace(',', '.')) * 100);
 
 export default function MenuScreen() {
   const nav = useNavigate();
   const [cat, setCat] = useState<string | null>(null); // null = tümü
   const [catModal, setCatModal] = useState<Category | 'new' | null>(null);
   const [prodModal, setProdModal] = useState<Product | 'new' | null>(null);
+  const [catalogModal, setCatalogModal] = useState(false);
 
   const categories = useQuery({
     queryKey: ['categories'],
@@ -75,8 +75,14 @@ export default function MenuScreen() {
             {cat === null ? 'Tüm Ürünler' : (categories.data ?? []).find((c) => c.id === cat)?.name}
           </h2>
           <button
+            onClick={() => setCatalogModal(true)}
+            className="ml-auto rounded-lg bg-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700"
+          >
+            Birim / Vergi
+          </button>
+          <button
             onClick={() => setProdModal('new')}
-            className="ml-auto rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white"
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white"
           >
             + Ürün
           </button>
@@ -121,7 +127,165 @@ export default function MenuScreen() {
           onClose={() => setProdModal(null)}
         />
       )}
+      {catalogModal && (
+        <CatalogSettingsModal
+          units={units.data ?? []}
+          taxes={taxes.data ?? []}
+          onClose={() => setCatalogModal(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// Birim ve vergi yonetimi (ekle/sil). Urun eklemek icin en az bir birim + bir
+// vergi sart oldugundan bu ekran katalogun on kosulu. Backend CRUD zaten mevcut.
+function CatalogSettingsModal({
+  units,
+  taxes,
+  onClose,
+}: {
+  units: Unit[];
+  taxes: Tax[];
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [error, setError] = useState('');
+  const [unitName, setUnitName] = useState('');
+  const [unitAbbr, setUnitAbbr] = useState('');
+  const [taxName, setTaxName] = useState('');
+  const [taxPct, setTaxPct] = useState('');
+  const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'İşlem başarısız.');
+  const refetch = (key: string) => qc.invalidateQueries({ queryKey: [key] });
+
+  const addUnit = useMutation({
+    mutationFn: () =>
+      api('/units', {
+        method: 'POST',
+        body: { name: unitName.trim(), abbreviation: unitAbbr.trim() || undefined },
+      }),
+    onSuccess: () => {
+      setUnitName('');
+      setUnitAbbr('');
+      setError('');
+      refetch('units');
+    },
+    onError: fail,
+  });
+  const delUnit = useMutation({
+    mutationFn: (id: string) => api(`/units/${id}`, { method: 'DELETE' }),
+    onSuccess: () => refetch('units'),
+    onError: fail,
+  });
+  const addTax = useMutation({
+    mutationFn: () =>
+      api('/taxes', {
+        method: 'POST',
+        // Yuzde -> binde (ratePermille). %10 -> 100.
+        body: { name: taxName.trim(), ratePermille: Math.round(parseFloat(taxPct.replace(',', '.')) * 10) },
+      }),
+    onSuccess: () => {
+      setTaxName('');
+      setTaxPct('');
+      setError('');
+      refetch('taxes');
+    },
+    onError: fail,
+  });
+  const delTax = useMutation({
+    mutationFn: (id: string) => api(`/taxes/${id}`, { method: 'DELETE' }),
+    onSuccess: () => refetch('taxes'),
+    onError: fail,
+  });
+
+  const unitValid = unitName.trim() !== '';
+  const taxValid = taxName.trim() !== '' && parseFloat(taxPct.replace(',', '.')) >= 0;
+
+  return (
+    <Modal title="Birim ve Vergiler" onClose={onClose}>
+      {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
+
+      <h3 className="mb-1 font-semibold text-slate-700">Birimler</h3>
+      <ul className="mb-2 divide-y rounded-lg border">
+        {units.length === 0 && <li className="p-2 text-sm text-slate-400">Birim yok</li>}
+        {units.map((u) => (
+          <li key={u.id} className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm text-slate-700">
+              {u.name}
+              {u.abbreviation ? ` (${u.abbreviation})` : ''}
+            </span>
+            <button
+              onClick={() => delUnit.mutate(u.id)}
+              className="text-sm text-red-500 hover:text-red-700"
+            >
+              Sil
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="mb-4 flex gap-2">
+        <input
+          value={unitName}
+          onChange={(e) => setUnitName(e.target.value)}
+          placeholder="Birim adı (Adet)"
+          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+        />
+        <input
+          value={unitAbbr}
+          onChange={(e) => setUnitAbbr(e.target.value)}
+          placeholder="Kısaltma"
+          className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+        />
+        <button
+          onClick={() => addUnit.mutate()}
+          disabled={!unitValid || addUnit.isPending}
+          className="rounded-lg bg-blue-600 px-3 text-sm font-medium text-white disabled:opacity-40"
+        >
+          Ekle
+        </button>
+      </div>
+
+      <h3 className="mb-1 font-semibold text-slate-700">Vergiler (KDV)</h3>
+      <ul className="mb-2 divide-y rounded-lg border">
+        {taxes.length === 0 && <li className="p-2 text-sm text-slate-400">Vergi yok</li>}
+        {taxes.map((t) => (
+          <li key={t.id} className="flex items-center justify-between px-3 py-2">
+            <span className="text-sm text-slate-700">
+              {t.name} — %{t.ratePermille / 10}
+              {t.isDefault && <span className="ml-1 text-xs text-blue-600">(varsayılan)</span>}
+            </span>
+            <button
+              onClick={() => delTax.mutate(t.id)}
+              className="text-sm text-red-500 hover:text-red-700"
+            >
+              Sil
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex gap-2">
+        <input
+          value={taxName}
+          onChange={(e) => setTaxName(e.target.value)}
+          placeholder="Vergi adı (KDV %10)"
+          className="flex-1 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+        />
+        <input
+          value={taxPct}
+          onChange={(e) => setTaxPct(e.target.value)}
+          inputMode="decimal"
+          placeholder="% oran"
+          className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+        />
+        <button
+          onClick={() => addTax.mutate()}
+          disabled={!taxValid || addTax.isPending}
+          className="rounded-lg bg-blue-600 px-3 text-sm font-medium text-white disabled:opacity-40"
+        >
+          Ekle
+        </button>
+      </div>
+    </Modal>
   );
 }
 

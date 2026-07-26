@@ -36,6 +36,7 @@ export interface Order {
   id: string;
   orderNo: string;
   tableId: string | null;
+  type?: string; // dine_in | takeaway | delivery
   status: string; // open | held | completed | cancelled
   grandTotal: number; // kurus
   subtotal: number;

@@ -2,11 +2,10 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
+import { formatKurus, parseTlToKurus as toKurus } from '../lib/format';
 import type { Expense, ExpenseCategory, Income } from '../lib/types';
 
 // TL metnini kurusa cevir (KasaScreen ile ayni kalip). Gecersizse NaN.
-const toKurus = (tl: string) => Math.round(parseFloat(tl.replace(',', '.')) * 100);
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('tr-TR');
 
 export default function FinansScreen() {

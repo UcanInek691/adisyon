@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderStatus } from '@ado/shared';
+import { OrderStatus, OrderType } from '@ado/shared';
 
 /** Query string 'true'/'false' -> boolean. */
 const boolQuery = z
@@ -13,6 +13,7 @@ const clientOpId = z.string().min(1).optional();
 // --- Adisyon ac ---
 export const openOrderSchema = z.object({
   tableId: z.string().nullish(),
+  type: z.nativeEnum(OrderType).optional(), // varsayilan: dine_in
   guestCount: z.number().int().positive().optional(),
   note: z.string().nullish(),
   clientOpId,
@@ -77,6 +78,7 @@ export type ApplyDiscountDto = z.infer<typeof applyDiscountSchema>;
 export const orderQuerySchema = z.object({
   tableId: z.string().optional(),
   status: z.nativeEnum(OrderStatus).optional(),
+  type: z.nativeEnum(OrderType).optional(), // dine_in | takeaway | delivery
   open: boolQuery, // true -> yalniz acik adisyonlar
 });
 export type OrderQueryDto = z.infer<typeof orderQuerySchema>;

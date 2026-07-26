@@ -310,20 +310,7 @@ export class PrintingService implements OnModuleInit {
     // ödenince (split'in son ödemesi) bir kez basılır — mükerrer fiş önlenir.
     if (!order.isPaid) return;
 
-    // İlgili rotayı bul
-    const route = await this.prisma.printRoute.findFirst({
-      where: { branchId: event.branchId, documentType: DocumentType.Customer, deletedAt: null },
-    });
-
-    // Rota yoksa varsayılan yazıcıyı bul
-    let printerId = route?.printerId;
-    if (!printerId) {
-      const defaultPrinter = await this.prisma.printer.findFirst({
-        where: { branchId: event.branchId, isDefault: true, deletedAt: null },
-      });
-      printerId = defaultPrinter?.id;
-    }
-
+    const printerId = await this.resolveCustomerPrinterId(event.branchId);
     if (!printerId) {
       this.logger.warn(
         `No print route or default printer configured for customer receipts in branch ${event.branchId}`,
@@ -331,9 +318,33 @@ export class PrintingService implements OnModuleInit {
       return;
     }
 
-    // Fiş içeriğini derle (PrintDocument yapısı)
-    const printDoc = {
-      title: 'MÜŞTERİ BİLGİ FİŞİ',
+    const printDoc = this.buildCustomerDoc(order, 'MÜŞTERİ FİŞİ — ÖDENDİ');
+    await this.enqueuePrintJob(
+      event.branchId,
+      printerId,
+      DocumentType.Customer,
+      printDoc,
+      event.actorId || 'system',
+    );
+    await this.persistReceipt(order.id, order.orderNo, DocumentType.Customer, printerId, printDoc);
+  }
+
+  // Müşteri fişi yazıcısı: önce rota, yoksa varsayılan yazıcı.
+  private async resolveCustomerPrinterId(branchId: string): Promise<string | undefined> {
+    const route = await this.prisma.printRoute.findFirst({
+      where: { branchId, documentType: DocumentType.Customer, deletedAt: null },
+    });
+    if (route?.printerId) return route.printerId;
+    const defaultPrinter = await this.prisma.printer.findFirst({
+      where: { branchId, isDefault: true, deletedAt: null },
+    });
+    return defaultPrinter?.id;
+  }
+
+  // Soyut PrintDocument (müşteri fişi / hesap fişi ortak gövde). Başlık ayırt eder.
+  private buildCustomerDoc(order: any, title: string) {
+    return {
+      title,
       orderNo: order.orderNo,
       date: order.openedAt.toISOString(),
       items: order.items.map((item: any) => ({
@@ -345,15 +356,42 @@ export class PrintingService implements OnModuleInit {
       discount: (order.discountTotal || 0) / 100,
       grandTotal: (order.grandTotal || 0) / 100,
     };
+  }
 
+  // Ödeme ÖNCESİ hesap/adisyon fişi (talep üzerine). Ödeme almaz; fiş
+  // Receipt.type='bill' olarak kaydedilir (rapordan görülebilir).
+  async printBill(user: AuthUser, orderId: string): Promise<{ ok: boolean }> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, branchId: user.branchId, deletedAt: null },
+      include: {
+        items: {
+          where: { deletedAt: null, status: { not: 'cancelled' } },
+          include: { product: true },
+        },
+      },
+    });
+    if (!order) {
+      throw new NotFoundException({ code: 'ORDER_NOT_FOUND', message: 'Adisyon bulunamadı.' });
+    }
+
+    const printerId = await this.resolveCustomerPrinterId(user.branchId);
+    if (!printerId) {
+      throw new ConflictException({
+        code: 'NO_CUSTOMER_PRINTER',
+        message: 'Müşteri fişi için yazıcı/rota tanımlı değil.',
+      });
+    }
+
+    const printDoc = this.buildCustomerDoc(order, '*** HESAP *** (Ödeme alınmadı)');
     await this.enqueuePrintJob(
-      event.branchId,
+      user.branchId,
       printerId,
       DocumentType.Customer,
       printDoc,
-      event.actorId || 'system',
+      user.userId,
     );
-    await this.persistReceipt(order.id, order.orderNo, DocumentType.Customer, printerId, printDoc);
+    await this.persistReceipt(order.id, order.orderNo, 'bill', printerId, printDoc);
+    return { ok: true };
   }
 
   @OnEvent('order.item.sent', { async: true })

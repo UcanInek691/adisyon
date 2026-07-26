@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { newId, DebtTxnType, CashTxnType } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -78,8 +84,16 @@ export class CustomerService {
   async deleteCustomer(user: AuthUser, id: string) {
     const customer = await this.prisma.customer.findFirst({
       where: { id, branchId: user.branchId, deletedAt: null },
+      include: { debtAccount: true },
     });
     if (!customer) throw new NotFoundException('Müşteri bulunamadı.');
+    // Bakiyesi olan musteri silinirse borc raporlardan kaybolur -> engelle.
+    if (customer.debtAccount && customer.debtAccount.balance !== 0) {
+      throw new ConflictException({
+        code: 'CUSTOMER_HAS_BALANCE',
+        message: 'Bakiyesi sıfır olmayan müşteri silinemez. Önce hesabı kapatın.',
+      });
+    }
 
     await this.prisma.customer.update({
       where: { id },
@@ -190,6 +204,15 @@ export class CustomerService {
       include: { customer: true },
     });
     if (!account) throw new NotFoundException('Müşteri veresiye hesabı bulunamadı.');
+
+    // Borctan fazla tahsilat: normalde engellenir; kullanici acikca onayladiginda
+    // (allowOverpay) uyari ile devam edilebilir -> bakiye eksiye (alacak) doner.
+    if (dto.amount > account.balance && !dto.allowOverpay) {
+      throw new BadRequestException({
+        code: 'BILL_OVERPAY',
+        message: `Tahsilat tutari kalan borcu (${account.balance}) asamaz.`,
+      });
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // 1. Borç ödemesini kaydet
@@ -324,7 +347,7 @@ export class CustomerService {
           id: newId(),
           debtAccountId: account.id,
           type: DebtTxnType.Payment,
-          amount,
+          amount: -amount, // borcu azaltan kayit NEGATIF (payDebt ile ayni isaret; ekstre bakiyesi txn toplamindan yurur)
           relatedOrderId: orderId,
           createdBy: event.actorId || 'system',
           note: `Adisyon iadesi - borç geri alma (Ref No: ${orderId})`,

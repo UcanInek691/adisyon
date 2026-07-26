@@ -1,0 +1,23 @@
+// parseTlToKurus'un runnable self-check'i (binlik-nokta bug'i: "1.500" -> 1,50 TL olurdu).
+// Calistir: node --experimental-strip-types src/lib/format.selfcheck.ts
+import assert from 'node:assert';
+import { parseTlToKurus } from './format.ts';
+
+// Duz girisler.
+assert.equal(parseTlToKurus('100'), 10000);
+assert.equal(parseTlToKurus('12,5'), 1250);
+assert.equal(parseTlToKurus('12.5'), 1250);
+assert.equal(parseTlToKurus('0,05'), 5);
+
+// Turk binlik formati: nokta binlik, virgul ondalik.
+assert.equal(parseTlToKurus('1.500'), 150000);
+assert.equal(parseTlToKurus('1.234,56'), 123456);
+assert.equal(parseTlToKurus('1.234.567'), 123456700);
+
+// Gecersiz/belirsiz -> NaN (cagiran Number.isFinite ile dogrular).
+assert.ok(Number.isNaN(parseTlToKurus('')));
+assert.ok(Number.isNaN(parseTlToKurus('abc')));
+assert.ok(Number.isNaN(parseTlToKurus('1.5000')));
+assert.ok(Number.isNaN(parseTlToKurus('12,345')));
+
+console.log('✓ format.selfcheck OK');

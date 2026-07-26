@@ -8,10 +8,12 @@ import {
   loginPinSchema,
   refreshSchema,
   setupSchema,
+  verifyOwnerSchema,
   type LoginDto,
   type LoginPinDto,
   type RefreshDto,
   type SetupDto,
+  type VerifyOwnerDto,
 } from './dto/auth.schemas';
 import { AuthService, type RequestMeta } from './auth.service';
 
@@ -71,5 +73,14 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: AuthUser): Promise<unknown> {
     return this.auth.me(user);
+  }
+
+  // Owner sifre onayi (gun sonu vb.). Giris yapmis herhangi bir kullanici cagirir.
+  @Post('verify-owner')
+  verifyOwner(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(verifyOwnerSchema)) dto: VerifyOwnerDto,
+  ): Promise<{ ok: boolean }> {
+    return this.auth.verifyOwner(user.branchId, dto.password);
   }
 }

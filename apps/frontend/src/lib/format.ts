@@ -5,6 +5,21 @@ export function formatKurus(kurus: number): string {
   return tl.format(kurus / 100);
 }
 
+// TL metni -> kurus. Turk formati destekler: virgul ONDALIK, virgul varsa
+// noktalar binliktir ("1.500,50"); virgul yoksa "1.500" gibi salt-binlik desen
+// binlik sayilir, "12.5" ondaliktir. Gecersiz/belirsiz giris NaN (cagiran dogrular).
+export function parseTlToKurus(tl: string): number {
+  const s = tl.trim();
+  if (!s) return NaN;
+  const normalized = s.includes(',')
+    ? s.replace(/\./g, '').replace(',', '.')
+    : /^\d{1,3}(\.\d{3})+$/.test(s)
+      ? s.replace(/\./g, '')
+      : s;
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return NaN;
+  return Math.round(parseFloat(normalized) * 100);
+}
+
 // milis -> insan-okur miktar. Tam adetse tamsayi, degilse 3 hane.
 export function formatQty(milis: number): string {
   const q = milis / 1000;

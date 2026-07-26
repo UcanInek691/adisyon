@@ -43,6 +43,20 @@ export class ReportsController {
     return this.reportsService.getEndOfDay(user, date || '');
   }
 
+  // Ara rapor (X): acik kasa oturumunun anlik ozeti (kasayi kapatmaz).
+  @Get('shift')
+  @RequirePermissions(Permission.ReportView)
+  getShiftReport(@CurrentUser() user: AuthUser) {
+    return this.reportsService.getShiftReport(user);
+  }
+
+  // Gun sonu gecmisi: kapanmis kasa oturumlari (saklanan Z rakamlari).
+  @Get('end-of-day/history')
+  @RequirePermissions(Permission.ReportView)
+  getEndOfDayHistory(@CurrentUser() user: AuthUser) {
+    return this.reportsService.getEndOfDayHistory(user);
+  }
+
   @Get('customers/debt')
   @RequirePermissions(Permission.ReportView)
   getCustomerDebts(@CurrentUser() user: AuthUser) {

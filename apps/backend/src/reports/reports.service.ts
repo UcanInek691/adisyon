@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { businessDayWindow } from './reports.calc';
@@ -6,6 +7,22 @@ import { businessDayWindow } from './reports.calc';
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // Yonteme gore NET tahsilat = charge - refund. Iade kayitlari POZITIF tutar +
+  // direction='refund' ile durur; direction'siz toplam iadeyi tahsilat gibi sisirir.
+  private async paymentsNetByMethod(branchId: string, paidAt: Prisma.DateTimeFilter) {
+    const grouped = await this.prisma.payment.groupBy({
+      by: ['method', 'direction'],
+      where: { order: { branchId }, paidAt, deletedAt: null },
+      _sum: { amount: true },
+    });
+    const byMethod = new Map<string, number>();
+    for (const g of grouped) {
+      const sign = g.direction === 'refund' ? -1 : 1;
+      byMethod.set(g.method, (byMethod.get(g.method) ?? 0) + sign * (g._sum.amount ?? 0));
+    }
+    return [...byMethod.entries()].map(([method, totalKurus]) => ({ method, totalKurus }));
+  }
 
   // Gun sonu (Z) ozeti: tek is-gunu icin satis + odeme + kasa oturumu + gider/gelir.
   // Sahibin gunu kapatirken okudugu tek rapor. Veresiye ayri raporda (customers/debt).
@@ -23,14 +40,22 @@ export class ReportsService {
       _sum: { subtotal: true, discountTotal: true, grandTotal: true },
     });
 
-    const paymentsByMethod = await this.prisma.payment.groupBy({
-      by: ['method'],
+    const paymentsByMethod = await this.paymentsNetByMethod(user.branchId, {
+      gte: start,
+      lt: end,
+    });
+
+    // Satis tipine gore (salon / gel-al / paket) kirilim.
+    const salesByType = await this.prisma.order.groupBy({
+      by: ['type'],
       where: {
-        order: { branchId: user.branchId },
-        paidAt: { gte: start, lt: end },
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: start, lt: end },
         deletedAt: null,
       },
-      _sum: { amount: true },
+      _count: { id: true },
+      _sum: { grandTotal: true },
     });
 
     const sessions = await this.prisma.cashSession.findMany({
@@ -55,7 +80,12 @@ export class ReportsService {
         discountKurus: ordersSummary._sum.discountTotal || 0,
         netKurus: ordersSummary._sum.grandTotal || 0,
       },
-      payments: paymentsByMethod.map((p) => ({ method: p.method, totalKurus: p._sum.amount || 0 })),
+      payments: paymentsByMethod,
+      salesByType: salesByType.map((t) => ({
+        type: t.type,
+        count: t._count.id || 0,
+        netKurus: t._sum.grandTotal || 0,
+      })),
       cash: {
         sessions: sessions.map((s) => ({
           id: s.id,
@@ -74,6 +104,110 @@ export class ReportsService {
     };
   }
 
+  // Ara rapor (X): ACIK kasa oturumunun anlik ozeti. Kasayi KAPATMAZ (Z'den fark
+  // bu). Pencere = [oturum acilis, simdi]. Satis/odeme/gelir-gider + beklenen
+  // nakit canli okunur. Acik oturum yoksa null.
+  async getShiftReport(user: AuthUser) {
+    const session = await this.prisma.cashSession.findFirst({
+      where: { branchId: user.branchId, status: 'open', deletedAt: null },
+    });
+    if (!session) return null;
+
+    const start = session.openedAt;
+    const end = new Date();
+
+    const ordersSummary = await this.prisma.order.aggregate({
+      where: {
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _count: { id: true },
+      _sum: { subtotal: true, discountTotal: true, grandTotal: true },
+    });
+
+    const paymentsByMethod = await this.paymentsNetByMethod(user.branchId, {
+      gte: start,
+      lt: end,
+    });
+
+    const salesByType = await this.prisma.order.groupBy({
+      by: ['type'],
+      where: {
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      _count: { id: true },
+      _sum: { grandTotal: true },
+    });
+
+    const expenses = await this.prisma.expense.aggregate({
+      where: { branchId: user.branchId, spentAt: { gte: start, lt: end }, deletedAt: null },
+      _sum: { amount: true },
+    });
+    const incomes = await this.prisma.income.aggregate({
+      where: { branchId: user.branchId, receivedAt: { gte: start, lt: end }, deletedAt: null },
+      _sum: { amount: true },
+    });
+
+    // Beklenen nakit = acilis + acilis/kapanis disi tum kasa hareketleri
+    // (closeSession + KasaScreen ile ayni formul).
+    const cashTxns = await this.prisma.cashTransaction.findMany({
+      where: { cashSessionId: session.id, deletedAt: null },
+      select: { type: true, amount: true },
+    });
+    const expectedCashKurus = cashTxns.reduce(
+      (sum, t) => (t.type === 'opening' || t.type === 'closing' ? sum : sum + t.amount),
+      session.openingFloat,
+    );
+
+    return {
+      sessionId: session.id,
+      openedAt: session.openedAt,
+      generatedAt: end,
+      openingFloatKurus: session.openingFloat,
+      sales: {
+        count: ordersSummary._count.id || 0,
+        grossKurus: ordersSummary._sum.subtotal || 0,
+        discountKurus: ordersSummary._sum.discountTotal || 0,
+        netKurus: ordersSummary._sum.grandTotal || 0,
+      },
+      payments: paymentsByMethod,
+      salesByType: salesByType.map((t) => ({
+        type: t.type,
+        count: t._count.id || 0,
+        netKurus: t._sum.grandTotal || 0,
+      })),
+      expensesKurus: expenses._sum.amount || 0,
+      incomesKurus: incomes._sum.amount || 0,
+      expectedCashKurus,
+    };
+  }
+
+  // Gun sonu gecmisi: kapanmis kasa oturumlarini (her biri bir gun-sonu kaydi)
+  // saklanan Z rakamlariyla listeler. Recompute yok -> kapanista dondurulan
+  // beklenen/sayilan/fark aynen okunur. Detay icin getEndOfDay(businessDay).
+  async getEndOfDayHistory(user: AuthUser, limit = 90) {
+    const sessions = await this.prisma.cashSession.findMany({
+      where: { branchId: user.branchId, status: 'closed', deletedAt: null },
+      orderBy: { closedAt: 'desc' },
+      take: limit,
+    });
+    return sessions.map((s) => ({
+      id: s.id,
+      businessDay: s.businessDay,
+      openedAt: s.openedAt,
+      closedAt: s.closedAt,
+      openingFloatKurus: s.openingFloat,
+      expectedKurus: s.expectedAmount ?? 0,
+      countedKurus: s.countedAmount ?? 0,
+      differenceKurus: s.difference ?? 0,
+    }));
+  }
+
   async getDailySales(user: AuthUser, start: string, end: string) {
     const startDate = new Date(start);
     const endDate = new Date(end);
@@ -90,15 +224,36 @@ export class ReportsService {
       _sum: { grandTotal: true, discountTotal: true },
     });
 
-    // Payments by method
-    const paymentsByMethod = await this.prisma.payment.groupBy({
-      by: ['method'],
+    // Payments by method (net: tahsilat - iade)
+    const paymentsByMethod = await this.paymentsNetByMethod(user.branchId, {
+      gte: startDate,
+      lte: endDate,
+    });
+
+    // Satis tipine gore (salon / gel-al / paket) kirilim.
+    const salesByType = await this.prisma.order.groupBy({
+      by: ['type'],
       where: {
-        order: { branchId: user.branchId },
-        paidAt: { gte: startDate, lte: endDate },
+        branchId: user.branchId,
+        status: 'completed',
+        openedAt: { gte: startDate, lte: endDate },
         deletedAt: null,
       },
-      _sum: { amount: true },
+      _count: { id: true },
+      _sum: { grandTotal: true },
+    });
+
+    // Basilan fisler (hesap fisi 'bill' + odendi fisi 'customer') — geri donup bakmak icin.
+    const receipts = await this.prisma.receipt.findMany({
+      where: {
+        order: { branchId: user.branchId },
+        type: { in: ['bill', 'customer'] },
+        printedAt: { gte: startDate, lte: endDate },
+        deletedAt: null,
+      },
+      include: { order: { select: { orderNo: true, grandTotal: true } } },
+      orderBy: { printedAt: 'desc' },
+      take: 200,
     });
 
     // Sales by product categories
@@ -128,9 +283,18 @@ export class ReportsService {
       salesCount: ordersSummary._count.id || 0,
       salesTotalKurus: ordersSummary._sum.grandTotal || 0,
       discountTotalKurus: ordersSummary._sum.discountTotal || 0,
-      payments: paymentsByMethod.map((p) => ({
-        method: p.method,
-        totalKurus: p._sum.amount || 0,
+      payments: paymentsByMethod,
+      salesByType: salesByType.map((t) => ({
+        type: t.type,
+        count: t._count.id || 0,
+        netKurus: t._sum.grandTotal || 0,
+      })),
+      receipts: receipts.map((r) => ({
+        receiptNo: r.receiptNo,
+        type: r.type, // bill (Hesap) | customer (Ödendi)
+        orderNo: r.order.orderNo,
+        printedAt: r.printedAt.toISOString(),
+        totalKurus: r.order.grandTotal,
       })),
       categoryBreakdown: Object.entries(categoryBreakdown).map(([category, totalKurus]) => ({
         category,
@@ -223,7 +387,7 @@ export class ReportsService {
         minStockMilis: prod.minStock,
         currentStockMilis,
         costPriceKurus: prod.purchasePrice,
-        stockValueKurus: (currentStockMilis / 1000) * prod.purchasePrice,
+        stockValueKurus: Math.round((currentStockMilis * prod.purchasePrice) / 1000),
       };
     });
   }

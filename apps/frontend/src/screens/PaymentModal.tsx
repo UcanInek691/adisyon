@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import { formatKurus } from '../lib/format';
-import type { Order, Payment } from '../lib/types';
+import { formatKurus, parseTlToKurus } from '../lib/format';
+import type { Customer, Order, Payment } from '../lib/types';
 
 const METHODS: { key: string; label: string }[] = [
   { key: 'cash', label: 'Nakit' },
   { key: 'card', label: 'Kart' },
   { key: 'transfer', label: 'Havale' },
+  { key: 'debt', label: 'Veresiye' },
 ];
 
 // Parcali/split odeme: her odeme kalani azaltir; toplam >= grandTotal olunca
@@ -26,30 +27,46 @@ export default function PaymentModal({
   const qc = useQueryClient();
   const [method, setMethod] = useState('cash');
   const [amountTl, setAmountTl] = useState('');
+  const [customerId, setCustomerId] = useState('');
   const [error, setError] = useState('');
+  const [overpayAck, setOverpayAck] = useState(false);
 
   const payments = useQuery({
     queryKey: ['payments', orderId],
     queryFn: () => api<Payment[]>(`/orders/${orderId}/payments`),
+  });
+  // Veresiye (debt) icin musteri secimi zorunlu — backend customerId ister.
+  const customers = useQuery({
+    queryKey: ['customers'],
+    queryFn: () => api<Customer[]>('/customers'),
+    enabled: method === 'debt',
   });
 
   const paid = (payments.data ?? []).reduce((s, p) => s + p.amount, 0);
   const remaining = Math.max(0, grandTotal - paid);
   // Girilen tutar yoksa kalanin tamami varsayilir.
   const amountKurus = amountTl.trim()
-    ? Math.round(parseFloat(amountTl.replace(',', '.')) * 100)
+    ? parseTlToKurus(amountTl)
     : remaining;
+  const isOverpay = amountKurus > remaining;
 
   const pay = useMutation({
     mutationFn: () =>
       api<Order & { payments?: Payment[] }>(`/orders/${orderId}/payments`, {
         method: 'POST',
-        body: { method, amount: amountKurus, idempotencyKey: crypto.randomUUID() },
+        body: {
+          method,
+          amount: amountKurus,
+          idempotencyKey: crypto.randomUUID(),
+          ...(isOverpay ? { allowOverpay: true } : {}),
+          ...(method === 'debt' ? { customerId } : {}),
+        },
       }),
     onSuccess: (order) => {
       qc.invalidateQueries({ queryKey: ['payments', orderId] });
       qc.invalidateQueries({ queryKey: ['order', orderId] });
       setAmountTl('');
+      setOverpayAck(false);
       if (order.status === 'completed') {
         qc.invalidateQueries({ queryKey: ['orders', 'open'] });
         onCompleted();
@@ -58,7 +75,8 @@ export default function PaymentModal({
     onError: (e) => setError(e instanceof ApiError ? e.message : 'Ödeme başarısız.'),
   });
 
-  const valid = amountKurus > 0 && amountKurus <= remaining;
+  const valid =
+    amountKurus > 0 && (method !== 'debt' || customerId !== '') && (!isOverpay || overpayAck);
 
   return (
     <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
@@ -76,7 +94,7 @@ export default function PaymentModal({
           <Row label="Kalan" value={formatKurus(remaining)} bold />
         </div>
 
-        <div className="mb-4 grid grid-cols-3 gap-2">
+        <div className="mb-4 grid grid-cols-2 gap-2">
           {METHODS.map((m) => (
             <button
               key={m.key}
@@ -90,6 +108,31 @@ export default function PaymentModal({
           ))}
         </div>
 
+        {method === 'debt' && (
+          <div className="mb-4">
+            <label className="mb-1 block text-sm font-medium text-slate-600">
+              Müşteri (veresiye hesabına yazılır)
+            </label>
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-3 text-lg"
+            >
+              <option value="">— Müşteri seçin —</option>
+              {(customers.data ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            {(customers.data ?? []).length === 0 && !customers.isLoading && (
+              <p className="mt-1 text-xs text-slate-400">
+                Kayıtlı müşteri yok — Veresiye ekranından ekleyin.
+              </p>
+            )}
+          </div>
+        )}
+
         <label className="mb-1 block text-sm font-medium text-slate-600">
           Tutar (TL) — boş bırakılırsa kalanın tamamı
         </label>
@@ -100,6 +143,21 @@ export default function PaymentModal({
           placeholder={(remaining / 100).toFixed(2)}
           className="mb-4 w-full rounded-lg border border-slate-300 px-3 py-3 text-lg"
         />
+
+        {isOverpay && (
+          <label className="mb-3 flex items-start gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+            <input
+              type="checkbox"
+              checked={overpayAck}
+              onChange={(e) => setOverpayAck(e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>
+              Kalandan <b>{formatKurus(amountKurus - remaining)}</b> fazla tahsilat yapılıyor.
+              Onaylıyorum.
+            </span>
+          </label>
+        )}
 
         {error && <p className="mb-3 text-sm text-red-600">{error}</p>}
 

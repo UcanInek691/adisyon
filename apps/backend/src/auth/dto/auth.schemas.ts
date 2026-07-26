@@ -30,3 +30,9 @@ export const setupSchema = z.object({
   waiterPin: z.string().min(3).optional(),
 });
 export type SetupDto = z.infer<typeof setupSchema>;
+
+/** Owner sifre onayi (gun sonu vb.). */
+export const verifyOwnerSchema = z.object({
+  password: z.string().min(1),
+});
+export type VerifyOwnerDto = z.infer<typeof verifyOwnerSchema>;

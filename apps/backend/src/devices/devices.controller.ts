@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { networkInterfaces } from 'node:os';
 import { Permission } from '@ado/shared';
 import { DevicesService } from './devices.service';
 import { ZodValidationPipe } from '../common/http/zod-validation.pipe';
@@ -14,6 +15,19 @@ import {
 @Controller('devices')
 export class DevicesController {
   constructor(private readonly devices: DevicesService) {}
+
+  // Garsonun tablette gireceği sunucu adresi(leri). IP degisirse buradan gorulur.
+  @Get('server-info')
+  serverInfo() {
+    const port = Number(process.env.API_PORT) || 3001;
+    const addresses: string[] = [];
+    for (const iface of Object.values(networkInterfaces())) {
+      for (const net of iface ?? []) {
+        if (net.family === 'IPv4' && !net.internal) addresses.push(net.address);
+      }
+    }
+    return { port, addresses, urls: addresses.map((a) => `http://${a}:${port}`) };
+  }
 
   @Post()
   @RequirePermissions(Permission.SettingsManage)

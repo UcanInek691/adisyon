@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, clearSession, getUser, hasPerm } from '../lib/api';
+import { api, ApiError, getUser } from '../lib/api';
 import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus } from '../lib/format';
-import type { OfflineReview, Order, Table } from '../lib/types';
+import type { Order, Table } from '../lib/types';
 import SyncBadge from '../offline/SyncBadge';
 import { offlineOpenTable } from '../offline/actions';
 import { isOffline } from '../offline/engine';
@@ -36,16 +36,10 @@ export default function TablesScreen() {
     queryFn: () => draftAll(),
     refetchInterval: 2000,
   });
-  // Cakisan offline mutasyonlarin Owner onay sayisi. OFFLINE_DESIGN.md §8
-  const reviewCount = useQuery({
-    queryKey: ['offline-reviews', 'count'],
-    queryFn: async () => (await api<OfflineReview[]>('/offline-reviews')).length,
-    refetchInterval: 20_000,
-    enabled: hasPerm('order.cancel'),
-  });
-
   const openByTable = new Map<string, Order>();
   for (const o of openOrders.data ?? []) if (o.tableId) openByTable.set(o.tableId, o);
+  // Masasiz acik adisyonlar = paket (kurye) + gel-al.
+  const openTakeaway = (openOrders.data ?? []).filter((o) => !o.tableId);
   const heldByTable = new Map<string, Order>();
   for (const o of heldOrders.data ?? []) if (o.tableId) heldByTable.set(o.tableId, o);
   const localByTable = new Map<string, DraftOrder>();
@@ -58,7 +52,29 @@ export default function TablesScreen() {
       qc.invalidateQueries({ queryKey: ['orders', 'open'] });
       nav(`/orders/${order.id}`);
     },
+    onError: (e) => alert(e instanceof ApiError ? e.message : 'Adisyon açılamadı.'),
   });
+  // Masasiz adisyon: paket (delivery) / gel-al (takeaway). Cevrimici gerekir.
+  const createTakeaway = useMutation({
+    mutationFn: (type: 'takeaway' | 'delivery') =>
+      api<Order>('/orders', { method: 'POST', body: { type } }),
+    onSuccess: (order) => {
+      qc.invalidateQueries({ queryKey: ['orders', 'open'] });
+      nav(`/orders/${order.id}`);
+    },
+    onError: (e) => alert(e instanceof ApiError ? e.message : 'Adisyon açılamadı.'),
+  });
+  // Paket/gel-al adisyonunu iptal (sil). Yanlış açılanlar temizlenebilsin.
+  const cancelOrder = useMutation({
+    mutationFn: (orderId: string) =>
+      api(`/orders/${orderId}/cancel`, { method: 'POST', body: { reason: 'İptal' } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['orders', 'open'] }),
+    onError: (e) => alert(e instanceof ApiError ? e.message : 'İptal edilemedi.'),
+  });
+  const askCancel = (o: Order) => {
+    const what = o.type === 'delivery' ? 'paket' : 'gel-al';
+    if (confirm(`Bu ${what} adisyonunu iptal etmek istiyor musunuz?`)) cancelOrder.mutate(o.id);
+  };
   const resumeOrder = useMutation({
     mutationFn: (orderId: string) => api<Order>(`/orders/${orderId}/resume`, { method: 'POST' }),
     onSuccess: (order) => {
@@ -82,100 +98,79 @@ export default function TablesScreen() {
     createOrder.mutate(t.id);
   }
 
-  function logout() {
-    clearSession();
-    nav('/login', { replace: true });
-  }
-
   const loading = halls.isLoading || tables.isLoading || openOrders.isLoading;
-  const busy = createOrder.isPending || resumeOrder.isPending;
+  const busy = createOrder.isPending || resumeOrder.isPending || createTakeaway.isPending;
+  const offline = isOffline();
 
   return (
     <div className="min-h-full bg-slate-100">
-      <header className="flex items-center justify-between bg-white px-6 py-3 shadow">
+      <header className="flex items-center justify-between border-b bg-white px-6 py-3">
         <h1 className="text-xl font-bold text-slate-800">Masalar</h1>
         <div className="flex items-center gap-3 text-sm text-slate-500">
           <SyncBadge />
-          <span>{user?.displayName ?? user?.role ?? ''}</span>
-          {hasPerm('cash.manage') && (
-            <button
-              onClick={() => nav('/cash')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Kasa
-            </button>
-          )}
-          {hasPerm('debt.manage') && (
-            <button
-              onClick={() => nav('/customers')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Veresiye
-            </button>
-          )}
-          {hasPerm('finance.manage') && (
-            <button
-              onClick={() => nav('/finance')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Gelir/Gider
-            </button>
-          )}
-          {hasPerm('product.manage') && (
-            <button
-              onClick={() => nav('/menu')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Ürünler
-            </button>
-          )}
-          {hasPerm('table.manage') && (
-            <button
-              onClick={() => nav('/tables-admin')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Masa Yönetimi
-            </button>
-          )}
-          {hasPerm('user.manage') && (
-            <button
-              onClick={() => nav('/users')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Kullanıcılar
-            </button>
-          )}
-          {hasPerm('order.cancel') && (reviewCount.data ?? 0) > 0 && (
-            <button
-              onClick={() => nav('/offline-reviews')}
-              className="rounded-lg bg-orange-100 px-3 py-1 font-medium text-orange-700"
-            >
-              Offline Onay ({reviewCount.data})
-            </button>
-          )}
-          {(hasPerm('settings.manage') || hasPerm('backup.manage')) && (
-            <button
-              onClick={() => nav('/settings')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Ayarlar
-            </button>
-          )}
-          {hasPerm('report.view') && (
-            <button
-              onClick={() => nav('/report')}
-              className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-            >
-              Gün Sonu
-            </button>
-          )}
-          <button onClick={logout} className="rounded-lg bg-slate-200 px-3 py-1 font-medium">
-            Çıkış
-          </button>
+          <span className="font-medium text-slate-600">
+            {user?.displayName ?? user?.role ?? ''}
+          </span>
         </div>
       </header>
 
       <main className="p-6">
+        {/* Paket (kurye) / Gel-Al — masasiz adisyonlar */}
+        <section className="mb-8">
+          <div className="mb-3 flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-slate-700">Paket / Gel-Al</h2>
+            <button
+              onClick={() => createTakeaway.mutate('delivery')}
+              disabled={busy || offline}
+              className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white shadow disabled:opacity-40"
+            >
+              + Paket (Kurye)
+            </button>
+            <button
+              onClick={() => createTakeaway.mutate('takeaway')}
+              disabled={busy || offline}
+              className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white shadow disabled:opacity-40"
+            >
+              + Gel-Al
+            </button>
+            {offline && (
+              <span className="text-xs text-slate-400">çevrimdışıyken paket/gel-al açılamaz</span>
+            )}
+          </div>
+          {openTakeaway.length === 0 ? (
+            <p className="text-sm text-slate-400">Açık paket/gel-al adisyonu yok</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
+              {openTakeaway.map((o) => (
+                <div key={o.id} className="relative">
+                  <button
+                    data-testid={`takeaway-${o.id}`}
+                    onClick={() => nav(`/orders/${o.id}`)}
+                    disabled={busy}
+                    className={`flex aspect-square w-full flex-col items-center justify-center rounded-xl p-2 text-center font-semibold text-white shadow ${
+                      o.type === 'delivery' ? 'bg-sky-500' : 'bg-teal-500'
+                    }`}
+                  >
+                    <span className="text-2xl">{o.type === 'delivery' ? '🛵' : '🥡'}</span>
+                    <span className="mt-0.5 text-xs">
+                      {o.type === 'delivery' ? 'Paket' : 'Gel-Al'} #{o.orderNo.split('-')[1] ?? ''}
+                    </span>
+                    <span className="mt-1 text-xs">{formatKurus(o.grandTotal)}</span>
+                  </button>
+                  <button
+                    onClick={() => askCancel(o)}
+                    disabled={busy || cancelOrder.isPending}
+                    title="İptal et"
+                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-sm font-bold text-white hover:bg-black/60 disabled:opacity-40"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         {loading && <p className="text-slate-500">Yükleniyor…</p>}
         {(halls.data ?? []).map((hall) => {
           const hallTables = (tables.data ?? []).filter((t) => t.hallId === hall.id);

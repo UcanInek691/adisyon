@@ -10,7 +10,9 @@ import {
   createDomainEvent,
   DomainEventName,
   OrderStatus,
+  OrderType,
   OrderItemStatus,
+  PaymentDirection,
   TableStatus,
   Permission,
 } from '@ado/shared';
@@ -95,6 +97,7 @@ export class OrdersService {
           id,
           branchId: user.branchId,
           tableId: dto.tableId ?? null,
+          type: dto.type ?? OrderType.DineIn,
           orderNo,
           status: OrderStatus.Open,
           openedBy: user.userId,
@@ -134,6 +137,7 @@ export class OrdersService {
         deletedAt: null,
         ...(query.tableId ? { tableId: query.tableId } : {}),
         ...(query.status ? { status: query.status } : {}),
+        ...(query.type ? { type: query.type } : {}),
         ...(query.open ? { status: OrderStatus.Open } : {}),
       },
       include: { items: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } } },
@@ -151,6 +155,13 @@ export class OrdersService {
       throw new ConflictException({
         code: 'ORDER_NOT_CANCELABLE',
         message: 'Yalnizca acik/bekleyen adisyon iptal edilebilir.',
+      });
+    }
+    // Odemesi alinmis adisyon iptal edilemez: para kayitlarda bosta kalir.
+    if ((await this.netPaid(id)) > 0) {
+      throw new ConflictException({
+        code: 'ORDER_HAS_PAYMENTS',
+        message: 'Odeme alinmis adisyon iptal edilemez; once odemeyi iade edin.',
       });
     }
     const updated = await this.prisma.order.update({
@@ -251,12 +262,17 @@ export class OrdersService {
   }
 
   async updateItem(user: AuthUser, orderId: string, itemId: string, dto: UpdateItemDto) {
-    await this.orderOpenOrThrow(user.branchId, orderId);
+    const order = await this.orderOpenOrThrow(user.branchId, orderId);
     const item = await this.itemOrThrow(orderId, itemId);
     this.assertItemEditable(item);
 
     const gross = Math.round((item.unitPrice * dto.quantity) / 1000);
     const lineTotal = gross - item.lineDiscount;
+    await this.assertNotBelowPaid(
+      orderId,
+      order.grandTotal,
+      order.grandTotal - (item.lineTotal - lineTotal),
+    );
     await this.prisma.orderItem.update({
       where: { id: itemId },
       data: {
@@ -281,10 +297,11 @@ export class OrdersService {
   }
 
   async removeItem(user: AuthUser, orderId: string, itemId: string) {
-    await this.orderOpenOrThrow(user.branchId, orderId);
+    const order = await this.orderOpenOrThrow(user.branchId, orderId);
     const item = await this.itemOrThrow(orderId, itemId);
     this.assertItemEditable(item);
 
+    await this.assertNotBelowPaid(orderId, order.grandTotal, order.grandTotal - item.lineTotal);
     await this.prisma.orderItem.update({
       where: { id: itemId },
       data: { deletedAt: new Date(), version: { increment: 1 }, syncState: 'pending' },
@@ -305,7 +322,7 @@ export class OrdersService {
 
   // Void: gonderilmis/onaylanmis kalemi iptal eder (Owner). Satir kalir, status=cancelled.
   async voidItem(user: AuthUser, orderId: string, itemId: string, dto: VoidItemDto) {
-    await this.orderOpenOrThrow(user.branchId, orderId);
+    const order = await this.orderOpenOrThrow(user.branchId, orderId);
     const item = await this.itemOrThrow(orderId, itemId);
     if (item.status === OrderItemStatus.Cancelled) {
       throw new ConflictException({
@@ -313,6 +330,7 @@ export class OrdersService {
         message: 'Kalem zaten iptal edilmis.',
       });
     }
+    await this.assertNotBelowPaid(orderId, order.grandTotal, order.grandTotal - item.lineTotal);
     await this.prisma.orderItem.update({
       where: { id: itemId },
       data: {
@@ -476,6 +494,15 @@ export class OrdersService {
     const target = await this.orderOpenOrThrow(user.branchId, targetOrderId);
     const source = await this.orderOpenOrThrow(user.branchId, sourceOrderId);
 
+    // Kaynagin odemeleri hedefe TASINMAZ; odemeli kaynak birlesirse musteri
+    // ayni tutari ikinci kez oder -> engelle.
+    if ((await this.netPaid(sourceOrderId)) > 0) {
+      throw new ConflictException({
+        code: 'MERGE_SOURCE_HAS_PAYMENTS',
+        message: 'Odeme alinmis adisyon birlestirilemez; once odemeyi iade edin.',
+      });
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.updateMany({
         where: { orderId: sourceOrderId, deletedAt: null },
@@ -541,6 +568,12 @@ export class OrdersService {
         message: 'Tum kalemler bolunemez; kaynakta en az bir kalem kalmali (masa-tasi kullanin).',
       });
     }
+    // Odemeler kaynakta kalir: tasinan kalemler kaynak toplamini alinan
+    // odemenin altina dusuremez (iptal kalemler toplami etkilemez).
+    const movedNet = items
+      .filter((i) => i.status !== OrderItemStatus.Cancelled)
+      .reduce((s, i) => s + i.lineTotal, 0);
+    await this.assertNotBelowPaid(sourceOrderId, source.grandTotal, source.grandTotal - movedNet);
     if (dto.targetTableId) {
       await this.tableOrThrow(user.branchId, dto.targetTableId);
       const occupied = await this.prisma.order.findFirst({
@@ -698,6 +731,7 @@ export class OrdersService {
         message: 'Toplam indirim ara toplami asamaz.',
       });
     }
+    await this.assertNotBelowPaid(orderId, order.grandTotal, order.grandTotal - amount);
     // Yetki esigi: ara toplamin %10'unu asan indirim tam-yetki (Owner) gerektirir.
     const hasFull = user.permissions.includes(Permission.DiscountApplyFull);
     const ratio = order.subtotal > 0 ? amount / order.subtotal : 1;
@@ -766,6 +800,35 @@ export class OrdersService {
   // ===========================================================================
   // Toplam motoru + yardimcilar (saf matematik: orders.calc.ts)
   // ===========================================================================
+  // Adisyona alinmis NET odeme (tahsilat - iade).
+  private async netPaid(orderId: string): Promise<number> {
+    const [charges, refunds] = await Promise.all([
+      this.prisma.payment.aggregate({
+        where: { orderId, direction: PaymentDirection.Charge, deletedAt: null },
+        _sum: { amount: true },
+      }),
+      this.prisma.payment.aggregate({
+        where: { orderId, direction: PaymentDirection.Refund, deletedAt: null },
+        _sum: { amount: true },
+      }),
+    ]);
+    return (charges._sum.amount ?? 0) - (refunds._sum.amount ?? 0);
+  }
+
+  // Toplami DUSUREN islem (indirim/void/miktar azalt/bolme) alinan odemenin
+  // altina inemez: adisyon bir daha kapanamaz (recordPayment kalan<=0 reddeder)
+  // ve sonsuza dek acik kalir. Once iade gerekir.
+  private async assertNotBelowPaid(orderId: string, oldTotal: number, newTotal: number) {
+    if (newTotal >= oldTotal) return; // artis/esit -> kontrol gereksiz
+    const paid = await this.netPaid(orderId);
+    if (paid > 0 && newTotal < paid) {
+      throw new ConflictException({
+        code: 'ORDER_PAID_EXCEEDS_TOTAL',
+        message: 'Yeni toplam alinan odemenin altina inemez; once odemeyi iade edin.',
+      });
+    }
+  }
+
   private async recompute(orderId: string) {
     const items = await this.prisma.orderItem.findMany({
       where: { orderId, deletedAt: null, status: { not: OrderItemStatus.Cancelled } },

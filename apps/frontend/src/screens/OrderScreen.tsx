@@ -105,6 +105,11 @@ export default function OrderScreen() {
     },
     onError: fail,
   });
+  // Ödeme öncesi hesap/adisyon fişi (bilgi fişi). Ödeme almaz.
+  const printBill = useMutation({
+    mutationFn: () => api(`/printers/order/${id}/bill`, { method: 'POST' }),
+    onError: fail,
+  });
   const o = order.data;
   // Sync sonrasi taslak gercek order id kazandi -> sunucu adisyonuna gec, taslagi sil.
   useEffect(() => {
@@ -130,33 +135,45 @@ export default function OrderScreen() {
     <div className="flex h-full flex-col bg-slate-100 md:flex-row">
       {/* Sol: adisyon */}
       <aside className="flex w-full flex-col bg-white shadow md:w-80">
-        <header className="flex items-center gap-3 border-b px-4 py-3">
-          <button
-            onClick={() => nav('/')}
-            className="rounded-lg bg-slate-200 px-3 py-1 font-medium"
-          >
-            ← Masalar
-          </button>
-          <span className="font-semibold text-slate-700">Adisyon {o?.orderNo ?? ''}</span>
-          <SyncBadge />
+        <header className="border-b px-4 py-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => nav('/')}
+              className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
+            >
+              ←
+            </button>
+            <span className="text-lg font-bold text-slate-800">Adisyon {o?.orderNo ?? ''}</span>
+            {o?.type === 'delivery' && (
+              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
+                🛵 Paket
+              </span>
+            )}
+            {o?.type === 'takeaway' && (
+              <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-700">
+                🥡 Gel-Al
+              </span>
+            )}
+            <SyncBadge />
+          </div>
           {o?.status === 'open' && o.tableId && !local && (
-            <div className="ml-auto flex gap-2">
+            <div className="mt-2 flex gap-2">
               <button
                 onClick={() => setTransfer('move')}
-                className="rounded-lg bg-slate-200 px-3 py-1 text-sm font-medium"
+                className="flex-1 rounded-lg bg-slate-100 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
               >
                 Taşı
               </button>
               <button
                 onClick={() => setTransfer('merge')}
-                className="rounded-lg bg-slate-200 px-3 py-1 text-sm font-medium"
+                className="flex-1 rounded-lg bg-slate-100 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
               >
                 Birleştir
               </button>
               {(o?.items ?? []).length >= 2 && (
                 <button
                   onClick={() => setSplitOpen(true)}
-                  className="rounded-lg bg-slate-200 px-3 py-1 text-sm font-medium"
+                  className="flex-1 rounded-lg bg-slate-100 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
                 >
                   Böl
                 </button>
@@ -233,40 +250,49 @@ export default function OrderScreen() {
           })}
         </ul>
 
-        <div className="border-t p-4">
+        <div className="border-t bg-slate-50 p-4">
           {(o?.discountTotal ?? 0) > 0 && (
             <div className="mb-1 flex items-center justify-between text-sm text-slate-500">
               <span>İndirim</span>
               <span>−{formatKurus(o?.discountTotal ?? 0)}</span>
             </div>
           )}
-          <div className="mb-3 flex items-center justify-between text-lg font-bold text-slate-800">
-            <span>Toplam</span>
-            <span>{formatKurus(o?.grandTotal ?? 0)}</span>
+          <div className="mb-3 flex items-baseline justify-between">
+            <span className="text-sm font-medium text-slate-500">Toplam</span>
+            <span className="text-2xl font-extrabold text-slate-800">
+              {formatKurus(o?.grandTotal ?? 0)}
+            </span>
           </div>
           {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
           <div className="mb-2 grid grid-cols-2 gap-2">
             <button
               onClick={() => setDiscountOpen(true)}
               disabled={busy || local || !o || o.status !== 'open'}
-              className="rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
+              className="rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
             >
               İndirim
             </button>
             <button
               onClick={() => hold.mutate()}
               disabled={busy || local || hold.isPending || !o || o.status !== 'open'}
-              className="rounded-lg bg-slate-100 py-2 font-medium text-slate-700 disabled:opacity-40"
+              className="rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
             >
               Beklet
             </button>
           </div>
+          <button
+            onClick={() => printBill.mutate()}
+            disabled={busy || local || printBill.isPending || !o || (o?.items ?? []).length === 0}
+            className="mb-2 w-full rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
+          >
+            🧾 {printBill.isPending ? 'Yazdırılıyor…' : 'Hesap Yazdır'}
+          </button>
           <div className={`grid gap-2 ${canPay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <button
               data-testid="send-kitchen"
               onClick={() => sendKitchen.mutate()}
               disabled={busy || !hasPending}
-              className="rounded-lg bg-slate-700 py-3 font-semibold text-white disabled:opacity-40"
+              className="rounded-xl bg-blue-600 py-3.5 font-bold text-white shadow-sm transition active:scale-95 hover:bg-blue-700 disabled:opacity-40"
             >
               Mutfağa Gönder
             </button>
@@ -274,7 +300,7 @@ export default function OrderScreen() {
               <button
                 onClick={() => setPayOpen(true)}
                 disabled={busy || local || !o || o.grandTotal <= 0}
-                className="rounded-lg bg-green-600 py-3 font-semibold text-white disabled:opacity-40"
+                className="rounded-xl bg-green-600 py-3.5 font-bold text-white shadow-sm transition active:scale-95 hover:bg-green-700 disabled:opacity-40"
               >
                 Öde
               </button>
