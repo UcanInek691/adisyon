@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { TokenService } from './token.service';
+import { RecoveryService } from './recovery.service';
 
 /**
  * Kimlik/Yetki modulu. JwtModule secret'lari cagri basina (TokenService) verildigi
@@ -11,7 +12,7 @@ import { TokenService } from './token.service';
 @Module({
   imports: [JwtModule.register({})],
   controllers: [AuthController],
-  providers: [AuthService, TokenService],
+  providers: [AuthService, TokenService, RecoveryService],
   exports: [TokenService],
 })
 export class AuthModule {}

@@ -251,9 +251,11 @@ function ActiveSession({
         </button>
       </div>
 
-      {/* Hareketler */}
+      <PaymentsPanel />
+
+      {/* Hareketler: yalniz kasa cekmecesi (nakit). Kart/havale ustteki kartta. */}
       <div className="rounded-2xl bg-white p-4 shadow">
-        <h2 className="mb-2 font-bold text-slate-800">Hareketler</h2>
+        <h2 className="mb-2 font-bold text-slate-800">Kasa Hareketleri (nakit)</h2>
         <ul className="divide-y">
           {session.transactions.map((t) => (
             <li key={t.id} className="flex items-center justify-between py-2 text-sm">
@@ -296,6 +298,101 @@ function ActiveSession({
           Kasayı Kapat
         </button>
       </div>
+    </div>
+  );
+}
+
+// Tum para girisi tek yerde: kasa cekmecesi yalnizca NAKDI tutar, kart/havale/
+// QR/veresiye hic girmez -> kullanici gunun gercek tahsilatini goremezdi.
+// Acik oturumun ozeti zaten /reports/shift'te var; yeni uc acmadan okunur.
+const METHOD_LABEL: Record<string, string> = {
+  cash: 'Nakit',
+  card: 'Kart',
+  transfer: 'Havale/EFT',
+  qr: 'QR',
+  debt: 'Veresiye',
+};
+
+interface ShiftPayments {
+  payments: { method: string; totalKurus: number }[];
+  debtCollectedKurus: number;
+  recentPayments: {
+    id: string;
+    method: string;
+    direction: string;
+    amountKurus: number;
+    paidAt: string;
+    orderNo: string;
+  }[];
+}
+
+function PaymentsPanel() {
+  const q = useQuery({
+    queryKey: ['shift', 'payments'],
+    queryFn: () => api<ShiftPayments | null>('/reports/shift'),
+    refetchInterval: 30_000,
+    retry: false,
+  });
+  const d = q.data;
+  if (!d) return null;
+  const total = d.payments.reduce((s, p) => s + p.totalKurus, 0);
+
+  return (
+    <div className="rounded-2xl bg-white p-4 shadow">
+      <h2 className="mb-2 font-bold text-slate-800">Tahsilat (tüm ödeme türleri)</h2>
+      <ul className="mb-3 divide-y">
+        {d.payments.length === 0 && <li className="py-2 text-sm text-slate-400">Tahsilat yok</li>}
+        {d.payments.map((p) => (
+          <li key={p.method} className="flex justify-between py-1.5 text-sm">
+            <span className="text-slate-600">{METHOD_LABEL[p.method] ?? p.method}</span>
+            <span className="font-semibold text-slate-700">{formatKurus(p.totalKurus)}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex justify-between border-t pt-2 font-bold text-slate-800">
+        <span>Toplam</span>
+        <span>{formatKurus(total)}</span>
+      </div>
+
+      {/* Veresiye tahsilati adisyon odemesi degil (ciro degil, alacak kapanisi);
+          bu yuzden toplamin disinda, ayri satirda gosterilir. */}
+      {d.debtCollectedKurus > 0 && (
+        <div className="mt-2 flex justify-between rounded-lg bg-slate-50 px-2 py-1.5 text-sm">
+          <span className="text-slate-500">Veresiye tahsilatı (ciro dışı)</span>
+          <span className="font-semibold text-slate-700">{formatKurus(d.debtCollectedKurus)}</span>
+        </div>
+      )}
+
+      {d.recentPayments.length > 0 && (
+        <>
+          <h3 className="mt-4 mb-1 text-sm font-semibold text-slate-500">Son işlemler</h3>
+          <ul className="divide-y">
+            {d.recentPayments.map((p) => (
+              <li key={p.id} className="flex items-center justify-between py-1.5 text-sm">
+                <span className="text-slate-600">
+                  {new Date(p.paidAt).toLocaleTimeString('tr-TR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                  <span className="ml-2">{METHOD_LABEL[p.method] ?? p.method}</span>
+                  <span className="ml-2 text-slate-400">#{p.orderNo}</span>
+                  {p.direction === 'refund' && (
+                    <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-600">
+                      İade
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={`font-semibold ${p.direction === 'refund' ? 'text-red-600' : 'text-slate-700'}`}
+                >
+                  {p.direction === 'refund' ? '−' : ''}
+                  {formatKurus(p.amountKurus)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }

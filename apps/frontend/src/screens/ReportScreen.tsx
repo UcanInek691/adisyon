@@ -114,6 +114,10 @@ const businessToday = () => {
 // Kuruş -> Türk Excel'i için virgüllü ondalık sayı (formatsız): 1500 -> "15,00".
 const tl = (kurus: number) => (kurus / 100).toFixed(2).replace('.', ',');
 const trDate = (iso: string) => new Date(iso).toLocaleString('tr-TR');
+// Aralık uçları LOCAL olmalı: 'Z' eki UTC demektir, TR'de gün 3 saat kayar
+// ("bugün" -> bugün 03:00–yarın 02:59). Offset'siz ISO local parse edilir.
+const dayStart = (d: string) => `${d}T00:00:00.000`;
+const dayEnd = (d: string) => `${d}T23:59:59.999`;
 
 type Tab = 'eod' | 'shift' | 'sales' | 'history' | 'debt' | 'audit';
 const TABS: { key: Tab; label: string }[] = [
@@ -488,7 +492,7 @@ function EodTab() {
 function SalesTab() {
   const [start, setStart] = useState(daysAgo(7));
   const [end, setEnd] = useState(today());
-  const range = `start=${start}T00:00:00.000Z&end=${end}T23:59:59.999Z`;
+  const range = `start=${dayStart(start)}&end=${dayEnd(end)}`;
   const daily = useQuery({
     queryKey: ['sales-daily', start, end],
     queryFn: () => api<DailySales>(`/reports/sales/daily?${range}`),
@@ -782,8 +786,8 @@ function AuditTab() {
   if (entityType) params.set('entityType', entityType);
   if (entityType && verb) params.set('action', `${entityType}.${verb}`);
   if (userId) params.set('userId', userId);
-  params.set('from', `${from}T00:00:00.000Z`);
-  params.set('to', `${to}T23:59:59.999Z`);
+  params.set('from', dayStart(from));
+  params.set('to', dayEnd(to));
   params.set('limit', '2000');
 
   const q = useQuery({

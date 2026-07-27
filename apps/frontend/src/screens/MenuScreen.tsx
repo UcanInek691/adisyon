@@ -5,7 +5,6 @@ import { api, ApiError } from '../lib/api';
 import { formatKurus, parseTlToKurus as toKurus } from '../lib/format';
 import type { Category, Product, Tax, Unit } from '../lib/types';
 
-
 export default function MenuScreen() {
   const nav = useNavigate();
   const [cat, setCat] = useState<string | null>(null); // null = tümü
@@ -182,7 +181,10 @@ function CatalogSettingsModal({
       api('/taxes', {
         method: 'POST',
         // Yuzde -> binde (ratePermille). %10 -> 100.
-        body: { name: taxName.trim(), ratePermille: Math.round(parseFloat(taxPct.replace(',', '.')) * 10) },
+        body: {
+          name: taxName.trim(),
+          ratePermille: Math.round(parseFloat(taxPct.replace(',', '.')) * 10),
+        },
       }),
     onSuccess: () => {
       setTaxName('');

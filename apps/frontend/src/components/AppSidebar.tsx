@@ -44,7 +44,7 @@ export default function AppSidebar() {
     path === '/' ? loc.pathname === '/' : loc.pathname.startsWith(path);
 
   return (
-    <nav className="flex w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-slate-900 py-3">
+    <nav className="flex w-20 shrink-0 flex-col items-center gap-1 overflow-y-auto bg-slate-900 py-3 print:hidden">
       {items.map((it) => (
         <SideButton
           key={it.path}

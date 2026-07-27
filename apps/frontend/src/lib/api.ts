@@ -39,14 +39,26 @@ export function clearSession(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+// Alanlar acikca atanir: `public status` gibi parametre-ozellikleri node'un
+// strip-only TS modunda calismaz, self-check bu dosyayi import edemez.
 export class ApiError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-  ) {
+  status: number;
+  code: string;
+  constructor(status: number, code: string, message: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
+}
+
+// Zarf {success,data}: data NULL olabilir (orn. acik kasa oturumu yokken
+// /reports/shift). `json?.data ?? json` null'i atlayip ZARFIN KENDISINI dondurur;
+// null bekleyen ekran truthy nesne gorup patlar (beyaz ekran). Bu yuzden
+// varlik degil, anahtar kontrolu yapilir.
+export function unwrapEnvelope(json: unknown): unknown {
+  return json && typeof json === 'object' && 'data' in json
+    ? (json as { data: unknown }).data
+    : json;
 }
 
 async function parse<T>(res: Response): Promise<T> {
@@ -55,7 +67,7 @@ async function parse<T>(res: Response): Promise<T> {
     const err = json?.error ?? json;
     throw new ApiError(res.status, err?.code ?? 'ERROR', err?.message ?? res.statusText);
   }
-  return (json?.data ?? json) as T;
+  return unwrapEnvelope(json) as T;
 }
 
 async function refresh(): Promise<boolean> {

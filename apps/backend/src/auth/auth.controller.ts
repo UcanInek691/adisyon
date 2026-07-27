@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
+import { Permission } from '@ado/shared';
 import { Public } from '../common/decorators/public.decorator';
+import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser, type AuthUser } from '../common/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/http/zod-validation.pipe';
 import {
@@ -9,13 +11,18 @@ import {
   refreshSchema,
   setupSchema,
   verifyOwnerSchema,
+  recoveryResetSchema,
+  recoveryToggleSchema,
   type LoginDto,
   type LoginPinDto,
   type RefreshDto,
   type SetupDto,
   type VerifyOwnerDto,
+  type RecoveryResetDto,
+  type RecoveryToggleDto,
 } from './dto/auth.schemas';
 import { AuthService, type RequestMeta } from './auth.service';
+import { RecoveryService } from './recovery.service';
 
 function metaOf(req: Request): RequestMeta {
   const ua = req.headers['user-agent'];
@@ -27,7 +34,10 @@ function metaOf(req: Request): RequestMeta {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly recovery: RecoveryService,
+  ) {}
 
   @Public()
   @Get('setup-status')
@@ -82,5 +92,47 @@ export class AuthController {
     @Body(new ZodValidationPipe(verifyOwnerSchema)) dto: VerifyOwnerDto,
   ): Promise<{ ok: boolean }> {
     return this.auth.verifyOwner(user.branchId, dto.password);
+  }
+
+  // --- Sifre kurtarma (kurtarma kodu) ---------------------------------------
+  // Varsayilan KAPALI: `auth.recovery.enabled` acilmadikca sifirlama reddedilir
+  // ve giris ekraninda baglanti gorunmez.
+
+  /** Giris ekrani "Sifremi unuttum" baglantisini gostersin mi. */
+  @Public()
+  @Get('recovery/status')
+  recoveryPublicStatus(): Promise<{ enabled: boolean }> {
+    return this.recovery.publicStatus();
+  }
+
+  /** Sahibi icin: acik mi, uretilmis kod var mi. */
+  @Get('recovery')
+  @RequirePermissions(Permission.UserManage)
+  recoveryStatus(@CurrentUser() user: AuthUser): Promise<{ enabled: boolean; hasCode: boolean }> {
+    return this.recovery.status(user);
+  }
+
+  /** Yeni kod uretir; duz metin YALNIZCA bu yanitta doner. */
+  @Post('recovery/generate')
+  @RequirePermissions(Permission.UserManage)
+  recoveryGenerate(@CurrentUser() user: AuthUser): Promise<{ code: string }> {
+    return this.recovery.generate(user);
+  }
+
+  @Post('recovery/enabled')
+  @RequirePermissions(Permission.UserManage)
+  recoveryToggle(
+    @CurrentUser() user: AuthUser,
+    @Body(new ZodValidationPipe(recoveryToggleSchema)) dto: RecoveryToggleDto,
+  ): Promise<{ enabled: boolean }> {
+    return this.recovery.setEnabled(user, dto.enabled);
+  }
+
+  @Public()
+  @Post('recovery/reset')
+  recoveryReset(
+    @Body(new ZodValidationPipe(recoveryResetSchema)) dto: RecoveryResetDto,
+  ): Promise<{ ok: true }> {
+    return this.recovery.resetPassword(dto.username, dto.code, dto.newPassword);
   }
 }

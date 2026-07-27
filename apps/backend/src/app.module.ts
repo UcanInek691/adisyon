@@ -31,6 +31,8 @@ import { SettingsModule } from './settings/settings.module';
 import { DevicesModule } from './devices/devices.module';
 import { UsersModule } from './users/users.module';
 import { SyncModule } from './sync/sync.module';
+import { LicenseModule } from './license/license.module';
+import { LicenseGuard } from './license/license.guard';
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -78,6 +80,7 @@ const isProd = process.env.NODE_ENV === 'production';
     DevicesModule,
     UsersModule,
     SyncModule,
+    LicenseModule,
   ],
   providers: [
     // Sira onemli: once kimlik (req.user'i doldurur), sonra izin denetimi.
@@ -85,6 +88,8 @@ const isProd = process.env.NODE_ENV === 'production';
     { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    // Lisans en sonda: `license.enforce` ayari acilmadikca hicbir sey yapmaz.
+    { provide: APP_GUARD, useClass: LicenseGuard },
   ],
 })
 export class AppModule {}

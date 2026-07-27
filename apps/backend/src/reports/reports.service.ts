@@ -29,11 +29,14 @@ export class ReportsService {
   async getEndOfDay(user: AuthUser, date: string) {
     const { day, start, end } = businessDayWindow(date);
 
+    // Ciro penceresi KAPANIS anina gore: tahsilat da paidAt ile filtreleniyor.
+    // openedAt kullanilirsa dun acilip bugun odenen adisyonun parasi rapora
+    // girer ama cirosu girmez -> rapor tutmaz. Tum rapor sorgulari closedAt.
     const ordersSummary = await this.prisma.order.aggregate({
       where: {
         branchId: user.branchId,
         status: 'completed',
-        openedAt: { gte: start, lt: end },
+        closedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -51,7 +54,7 @@ export class ReportsService {
       where: {
         branchId: user.branchId,
         status: 'completed',
-        openedAt: { gte: start, lt: end },
+        closedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -120,7 +123,7 @@ export class ReportsService {
       where: {
         branchId: user.branchId,
         status: 'completed',
-        openedAt: { gte: start, lt: end },
+        closedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -137,7 +140,7 @@ export class ReportsService {
       where: {
         branchId: user.branchId,
         status: 'completed',
-        openedAt: { gte: start, lt: end },
+        closedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -164,9 +167,53 @@ export class ReportsService {
       session.openingFloat,
     );
 
+    // Kasa ekraninin "son islemler" listesi: kasa cekmecesi yalnizca nakdi
+    // tutar, kart/havale/QR/veresiye hic girmez. Yonteme bakmaksizin son 20
+    // tahsilat/iade -> kullanici tum para girisini tek yerde gorur.
+    const recent = await this.prisma.payment.findMany({
+      where: {
+        order: { branchId: user.branchId },
+        paidAt: { gte: start, lt: end },
+        deletedAt: null,
+      },
+      orderBy: { paidAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        method: true,
+        direction: true,
+        amount: true,
+        paidAt: true,
+        order: { select: { orderNo: true } },
+      },
+    });
+
+    // Veresiye tahsilati ne Payment'tir ne de (karta/havaleye odendiyse) kasa
+    // hareketi: para girer ama hicbir listede gorunmez. Toplam olarak gosterilir.
+    // ponytail: yontem kirilimi yok -> DebtTransaction'da method kolonu yok;
+    // gerekirse kolon + migration ile eklenir.
+    const debtCollected = await this.prisma.debtTransaction.aggregate({
+      where: {
+        type: 'payment',
+        occurredAt: { gte: start, lt: end },
+        deletedAt: null,
+        debtAccount: { customer: { branchId: user.branchId } },
+      },
+      _sum: { amount: true },
+    });
+
     return {
       sessionId: session.id,
       openedAt: session.openedAt,
+      debtCollectedKurus: debtCollected._sum.amount ?? 0,
+      recentPayments: recent.map((p) => ({
+        id: p.id,
+        method: p.method,
+        direction: p.direction,
+        amountKurus: p.amount,
+        paidAt: p.paidAt,
+        orderNo: p.order.orderNo,
+      })),
       generatedAt: end,
       openingFloatKurus: session.openingFloat,
       sales: {
@@ -217,7 +264,7 @@ export class ReportsService {
       where: {
         branchId: user.branchId,
         status: 'completed',
-        openedAt: { gte: startDate, lte: endDate },
+        closedAt: { gte: startDate, lte: endDate },
         deletedAt: null,
       },
       _count: { id: true },
@@ -236,7 +283,7 @@ export class ReportsService {
       where: {
         branchId: user.branchId,
         status: 'completed',
-        openedAt: { gte: startDate, lte: endDate },
+        closedAt: { gte: startDate, lte: endDate },
         deletedAt: null,
       },
       _count: { id: true },
@@ -262,7 +309,7 @@ export class ReportsService {
         order: {
           branchId: user.branchId,
           status: 'completed',
-          openedAt: { gte: startDate, lte: endDate },
+          closedAt: { gte: startDate, lte: endDate },
           deletedAt: null,
         },
         deletedAt: null,
@@ -312,7 +359,7 @@ export class ReportsService {
         order: {
           branchId: user.branchId,
           status: 'completed',
-          openedAt: { gte: startDate, lte: endDate },
+          closedAt: { gte: startDate, lte: endDate },
           deletedAt: null,
         },
         deletedAt: null,

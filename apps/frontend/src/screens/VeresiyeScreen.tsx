@@ -5,7 +5,6 @@ import { api, ApiError, getAccess } from '../lib/api';
 import { formatKurus, parseTlToKurus as toKurus } from '../lib/format';
 import type { Customer } from '../lib/types';
 
-
 export default function VeresiyeScreen() {
   const nav = useNavigate();
   const [selected, setSelected] = useState<string | null>(null);

@@ -32,6 +32,18 @@ export const setupSchema = z.object({
 export type SetupDto = z.infer<typeof setupSchema>;
 
 /** Owner sifre onayi (gun sonu vb.). */
+// Kurtarma kodu ile sifre sifirlama. Kod bicimi serviste normalize edilir;
+// burada yalnizca makul uzunluk siniri (kaba kuvvet/DoS icin).
+export const recoveryResetSchema = z.object({
+  username: z.string().min(1).max(64),
+  code: z.string().min(16).max(32),
+  newPassword: z.string().min(6).max(128),
+});
+export type RecoveryResetDto = z.infer<typeof recoveryResetSchema>;
+
+export const recoveryToggleSchema = z.object({ enabled: z.boolean() });
+export type RecoveryToggleDto = z.infer<typeof recoveryToggleSchema>;
+
 export const verifyOwnerSchema = z.object({
   password: z.string().min(1),
 });

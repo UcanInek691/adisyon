@@ -45,9 +45,7 @@ export default function PaymentModal({
   const paid = (payments.data ?? []).reduce((s, p) => s + p.amount, 0);
   const remaining = Math.max(0, grandTotal - paid);
   // Girilen tutar yoksa kalanin tamami varsayilir.
-  const amountKurus = amountTl.trim()
-    ? parseTlToKurus(amountTl)
-    : remaining;
+  const amountKurus = amountTl.trim() ? parseTlToKurus(amountTl) : remaining;
   const isOverpay = amountKurus > remaining;
 
   const pay = useMutation({

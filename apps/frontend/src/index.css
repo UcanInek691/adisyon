@@ -9,3 +9,14 @@ body,
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
+
+/* Yazdirma / PDF: h-100% + overflow ciktiyi tek sayfaya kirpar. Yukseklik
+   serbest birakilir; sol menu print:hidden ile zaten cikmaz. */
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+  }
+}
