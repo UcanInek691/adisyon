@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError, getUser } from '../lib/api';
+import { api, ApiError, getUser, hasPerm } from '../lib/api';
 import { useLiveEvents } from '../lib/useLiveEvents';
 import { formatKurus } from '../lib/format';
 import type { Order, Table } from '../lib/types';
@@ -15,10 +15,8 @@ export default function TablesScreen() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const user = getUser();
-
   const halls = useQuery({ queryKey: ['halls'], queryFn: readHalls });
   const tables = useQuery({ queryKey: ['tables', 'active'], queryFn: readTables });
-  // Canli tazeleme SSE'den gelir; 30 sn polling SSE koparsa emniyet kemeri.
   useLiveEvents();
   const openOrders = useQuery({
     queryKey: ['orders', 'open'],
@@ -30,21 +28,29 @@ export default function TablesScreen() {
     queryFn: readHeldOrders,
     refetchInterval: 30_000,
   });
-  // Offline acilan (henuz sync olmamis) taslak adisyonlar. OFFLINE_DESIGN.md §4.2
   const localDrafts = useQuery({
     queryKey: ['local-drafts'],
     queryFn: () => draftAll(),
     refetchInterval: 2000,
   });
+  const cashStatus = useQuery({
+    queryKey: ['cash', 'status'],
+    queryFn: () => api<{ open: boolean }>('/cash/status'),
+    retry: false,
+    refetchInterval: 30_000,
+  });
+  const cashBlocked = cashStatus.data?.open === false;
+
   const openByTable = new Map<string, Order>();
-  for (const o of openOrders.data ?? []) if (o.tableId) openByTable.set(o.tableId, o);
-  // Masasiz acik adisyonlar = paket (kurye) + gel-al.
-  const openTakeaway = (openOrders.data ?? []).filter((o) => !o.tableId);
+  for (const order of openOrders.data ?? [])
+    if (order.tableId) openByTable.set(order.tableId, order);
+  const openTakeaway = (openOrders.data ?? []).filter((order) => !order.tableId);
   const heldByTable = new Map<string, Order>();
-  for (const o of heldOrders.data ?? []) if (o.tableId) heldByTable.set(o.tableId, o);
+  for (const order of heldOrders.data ?? [])
+    if (order.tableId) heldByTable.set(order.tableId, order);
   const localByTable = new Map<string, DraftOrder>();
-  for (const d of localDrafts.data ?? [])
-    if (d.tableId && !d.serverId) localByTable.set(d.tableId, d);
+  for (const draft of localDrafts.data ?? [])
+    if (draft.tableId && !draft.serverId) localByTable.set(draft.tableId, draft);
 
   const createOrder = useMutation({
     mutationFn: (tableId: string) => api<Order>('/orders', { method: 'POST', body: { tableId } }),
@@ -52,9 +58,8 @@ export default function TablesScreen() {
       qc.invalidateQueries({ queryKey: ['orders', 'open'] });
       nav(`/orders/${order.id}`);
     },
-    onError: (e) => alert(e instanceof ApiError ? e.message : 'Adisyon açılamadı.'),
+    onError: (error) => alert(error instanceof ApiError ? error.message : 'Adisyon açılamadı.'),
   });
-  // Masasiz adisyon: paket (delivery) / gel-al (takeaway). Cevrimici gerekir.
   const createTakeaway = useMutation({
     mutationFn: (type: 'takeaway' | 'delivery') =>
       api<Order>('/orders', { method: 'POST', body: { type } }),
@@ -62,106 +67,160 @@ export default function TablesScreen() {
       qc.invalidateQueries({ queryKey: ['orders', 'open'] });
       nav(`/orders/${order.id}`);
     },
-    onError: (e) => alert(e instanceof ApiError ? e.message : 'Adisyon açılamadı.'),
+    onError: (error) => alert(error instanceof ApiError ? error.message : 'Adisyon açılamadı.'),
   });
-  // Paket/gel-al adisyonunu iptal (sil). Yanlış açılanlar temizlenebilsin.
   const cancelOrder = useMutation({
     mutationFn: (orderId: string) =>
       api(`/orders/${orderId}/cancel`, { method: 'POST', body: { reason: 'İptal' } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['orders', 'open'] }),
-    onError: (e) => alert(e instanceof ApiError ? e.message : 'İptal edilemedi.'),
+    onError: (error) => alert(error instanceof ApiError ? error.message : 'İptal edilemedi.'),
   });
-  const askCancel = (o: Order) => {
-    const what = o.type === 'delivery' ? 'paket' : 'gel-al';
-    if (confirm(`Bu ${what} adisyonunu iptal etmek istiyor musunuz?`)) cancelOrder.mutate(o.id);
-  };
   const resumeOrder = useMutation({
     mutationFn: (orderId: string) => api<Order>(`/orders/${orderId}/resume`, { method: 'POST' }),
     onSuccess: (order) => {
       qc.invalidateQueries({ queryKey: ['orders'] });
       nav(`/orders/${order.id}`);
     },
+    onError: (error) =>
+      alert(error instanceof ApiError ? error.message : 'Adisyon yeniden açılamadı.'),
   });
 
-  async function onTable(t: Table) {
-    const open = openByTable.get(t.id);
-    const local = localByTable.get(t.id);
-    const held = heldByTable.get(t.id);
+  const askCancel = (order: Order) => {
+    const type = order.type === 'delivery' ? 'paket' : 'gel-al';
+    if (confirm(`Bu ${type} adisyonunu iptal etmek istiyor musunuz?`)) cancelOrder.mutate(order.id);
+  };
+
+  async function onTable(table: Table) {
+    const open = openByTable.get(table.id);
+    const local = localByTable.get(table.id);
+    const held = heldByTable.get(table.id);
     if (open) return nav(`/orders/${open.id}`);
     if (local) return nav(`/orders/${local.id}`);
+    if (cashBlocked) {
+      alert('Yeni adisyon açmak için önce kasa oturumunu açın.');
+      return;
+    }
     if (held) return resumeOrder.mutate(held.id);
     if (isOffline()) {
-      const id = await offlineOpenTable(t.id, t.name);
+      const id = await offlineOpenTable(table.id, table.name);
       qc.invalidateQueries({ queryKey: ['local-drafts'] });
       return nav(`/orders/${id}`);
     }
-    createOrder.mutate(t.id);
+    createOrder.mutate(table.id);
   }
 
   const loading = halls.isLoading || tables.isLoading || openOrders.isLoading;
   const busy = createOrder.isPending || resumeOrder.isPending || createTakeaway.isPending;
   const offline = isOffline();
+  const activeTableCount = openByTable.size + heldByTable.size + localByTable.size;
+  const freeTableCount = Math.max(0, (tables.data?.length ?? 0) - activeTableCount);
+  const openTotal = (openOrders.data ?? []).reduce((sum, order) => sum + order.grandTotal, 0);
 
   return (
-    <div className="min-h-full bg-slate-100">
-      <header className="flex items-center justify-between border-b bg-white px-6 py-3">
-        <h1 className="text-xl font-bold text-slate-800">Masalar</h1>
-        <div className="flex items-center gap-3 text-sm text-slate-500">
-          <SyncBadge />
-          <span className="font-medium text-slate-600">
-            {user?.displayName ?? user?.role ?? ''}
-          </span>
+    <div className="min-h-full bg-[#f5f5f2]">
+      <header className="sticky top-0 z-10 border-b border-stone-200/80 bg-[#f5f5f2]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div>
+            <p className="text-[11px] font-bold tracking-[0.18em] text-brand-700 uppercase">
+              Servis merkezi
+            </p>
+            <h1 className="mt-0.5 text-2xl font-black tracking-tight text-ink-900">Masa planı</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <SyncBadge />
+            <div className="hidden items-center gap-2 rounded-full border border-stone-200 bg-white py-1.5 pr-3 pl-1.5 shadow-sm sm:flex">
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ink-900 text-xs font-bold text-white">
+                {(user?.displayName ?? user?.username ?? 'K')
+                  .slice(0, 1)
+                  .toLocaleUpperCase('tr-TR')}
+              </span>
+              <span className="text-sm font-semibold text-ink-800">
+                {user?.displayName ?? user?.role ?? ''}
+              </span>
+            </div>
+          </div>
         </div>
       </header>
 
-      <main className="p-6">
-        {/* Paket (kurye) / Gel-Al — masasiz adisyonlar */}
-        <section className="mb-8">
-          <div className="mb-3 flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-slate-700">Paket / Gel-Al</h2>
-            <button
-              onClick={() => createTakeaway.mutate('delivery')}
-              disabled={busy || offline}
-              className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-semibold text-white shadow disabled:opacity-40"
-            >
-              + Paket (Kurye)
-            </button>
-            <button
-              onClick={() => createTakeaway.mutate('takeaway')}
-              disabled={busy || offline}
-              className="rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-semibold text-white shadow disabled:opacity-40"
-            >
-              + Gel-Al
-            </button>
-            {offline && (
-              <span className="text-xs text-slate-400">çevrimdışıyken paket/gel-al açılamaz</span>
+      <main className="mx-auto max-w-[1600px] p-4 sm:p-6">
+        {cashBlocked && (
+          <div className="mb-5 flex flex-col justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center">
+            <div>
+              <p className="font-black">Kasa oturumu kapalı</p>
+              <p className="text-sm text-amber-800">
+                Mevcut adisyonları görüntüleyebilirsiniz; yeni sipariş için kasayı açın.
+              </p>
+            </div>
+            {hasPerm('cash.manage') && (
+              <button
+                onClick={() => nav('/cash')}
+                className="min-h-10 rounded-xl bg-amber-900 px-4 text-sm font-bold text-white"
+              >
+                Kasaya git
+              </button>
             )}
           </div>
-          {openTakeaway.length === 0 ? (
-            <p className="text-sm text-slate-400">Açık paket/gel-al adisyonu yok</p>
-          ) : (
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
-              {openTakeaway.map((o) => (
-                <div key={o.id} className="relative">
+        )}
+
+        <section className="mb-6 grid grid-cols-3 gap-2 sm:max-w-xl sm:gap-3">
+          <Summary label="Aktif masa" value={activeTableCount} tone="dark" />
+          <Summary label="Boş masa" value={freeTableCount} tone="green" />
+          <Summary label="Açık tutar" value={formatKurus(openTotal)} />
+        </section>
+
+        <section className="mb-8 rounded-3xl border border-stone-200/80 bg-white p-4 shadow-panel sm:p-5">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <h2 className="text-lg font-bold text-ink-900">Paket ve gel-al</h2>
+              <p className="mt-0.5 text-sm text-stone-500">
+                Masasız siparişleri buradan hızlıca yönetin.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => createTakeaway.mutate('delivery')}
+                disabled={busy || offline || cashBlocked}
+                className="min-h-11 rounded-xl bg-sky-600 px-4 text-sm font-bold text-white transition hover:bg-sky-700 active:scale-[0.98] disabled:opacity-40"
+              >
+                + Paket sipariş
+              </button>
+              <button
+                onClick={() => createTakeaway.mutate('takeaway')}
+                disabled={busy || offline || cashBlocked}
+                className="min-h-11 rounded-xl bg-brand-600 px-4 text-sm font-bold text-white transition hover:bg-brand-700 active:scale-[0.98] disabled:opacity-40"
+              >
+                + Gel-al sipariş
+              </button>
+            </div>
+          </div>
+          {offline && (
+            <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+              Çevrimdışıyken paket ve gel-al siparişi açılamaz.
+            </p>
+          )}
+          {openTakeaway.length > 0 && (
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {openTakeaway.map((order) => (
+                <div key={order.id} className="relative">
                   <button
-                    data-testid={`takeaway-${o.id}`}
-                    onClick={() => nav(`/orders/${o.id}`)}
+                    data-testid={`takeaway-${order.id}`}
+                    onClick={() => nav(`/orders/${order.id}`)}
                     disabled={busy}
-                    className={`flex aspect-square w-full flex-col items-center justify-center rounded-xl p-2 text-center font-semibold text-white shadow ${
-                      o.type === 'delivery' ? 'bg-sky-500' : 'bg-teal-500'
+                    className={`flex min-h-28 w-full flex-col items-start justify-between rounded-2xl p-4 text-left text-white transition hover:-translate-y-0.5 active:translate-y-0 ${
+                      order.type === 'delivery' ? 'bg-sky-600' : 'bg-brand-600'
                     }`}
                   >
-                    <span className="text-2xl">{o.type === 'delivery' ? '🛵' : '🥡'}</span>
-                    <span className="mt-0.5 text-xs">
-                      {o.type === 'delivery' ? 'Paket' : 'Gel-Al'} #{o.orderNo.split('-')[1] ?? ''}
+                    <span className="text-xs font-bold tracking-wider text-white/75 uppercase">
+                      {order.type === 'delivery' ? 'Paket' : 'Gel-al'} · #
+                      {order.orderNo.split('-')[1] ?? order.orderNo}
                     </span>
-                    <span className="mt-1 text-xs">{formatKurus(o.grandTotal)}</span>
+                    <span className="text-lg font-black">{formatKurus(order.grandTotal)}</span>
                   </button>
                   <button
-                    onClick={() => askCancel(o)}
+                    onClick={() => askCancel(order)}
                     disabled={busy || cancelOrder.isPending}
                     title="İptal et"
-                    className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/40 text-sm font-bold text-white hover:bg-black/60 disabled:opacity-40"
+                    className="absolute top-2 right-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/15 text-lg text-white hover:bg-black/25 disabled:opacity-40"
                   >
                     ×
                   </button>
@@ -171,46 +230,136 @@ export default function TablesScreen() {
           )}
         </section>
 
-        {loading && <p className="text-slate-500">Yükleniyor…</p>}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-black tracking-tight text-ink-900">Salonlar</h2>
+            <p className="text-sm text-stone-500">
+              Sipariş açmak veya mevcut adisyona dönmek için masaya dokunun.
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-xs font-semibold text-stone-500">
+            <Legend color="bg-brand-500" label="Boş" />
+            <Legend color="bg-ink-900" label="Dolu" />
+            <Legend color="bg-violet-500" label="Beklemede" />
+          </div>
+        </div>
+
+        {loading && <p className="rounded-2xl bg-white p-6 text-stone-500">Masalar yükleniyor…</p>}
         {(halls.data ?? []).map((hall) => {
-          const hallTables = (tables.data ?? []).filter((t) => t.hallId === hall.id);
+          const hallTables = (tables.data ?? []).filter((table) => table.hallId === hall.id);
           return (
             <section key={hall.id} className="mb-8">
-              <h2 className="mb-3 text-lg font-semibold text-slate-700">{hall.name}</h2>
-              <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
-                {hallTables.map((t) => {
-                  const open = openByTable.get(t.id);
-                  const local = !open ? localByTable.get(t.id) : undefined;
-                  const held = !open && !local ? heldByTable.get(t.id) : undefined;
-                  const active = open ?? local ?? held;
-                  return (
-                    <button
-                      key={t.id}
-                      data-testid={`table-${t.id}`}
-                      onClick={() => void onTable(t)}
-                      disabled={busy}
-                      className={`flex aspect-square flex-col items-center justify-center rounded-xl p-2 text-center font-semibold shadow ${
-                        open || local
-                          ? 'bg-amber-500 text-white'
-                          : held
-                            ? 'bg-purple-500 text-white'
-                            : 'bg-white text-slate-700'
-                      }`}
-                    >
-                      <span className="text-lg">{t.name}</span>
-                      {held && <span className="mt-0.5 text-[10px]">bekletiliyor</span>}
-                      {local && <span className="mt-0.5 text-[10px]">⏳ senkron bekliyor</span>}
-                      {active && (
-                        <span className="mt-1 text-xs">{formatKurus(active.grandTotal)}</span>
-                      )}
-                    </button>
-                  );
-                })}
+              <div className="mb-3 flex items-center gap-2">
+                <h3 className="text-sm font-extrabold tracking-wide text-ink-800 uppercase">
+                  {hall.name}
+                </h3>
+                <span className="rounded-full bg-stone-200 px-2 py-0.5 text-[11px] font-bold text-stone-600">
+                  {hallTables.length} masa
+                </span>
               </div>
+              {hallTables.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-stone-300 p-5 text-sm text-stone-500">
+                  Bu salonda henüz masa yok.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
+                  {hallTables.map((table) => {
+                    const open = openByTable.get(table.id);
+                    const local = !open ? localByTable.get(table.id) : undefined;
+                    const held = !open && !local ? heldByTable.get(table.id) : undefined;
+                    const active = open ?? local ?? held;
+                    const state = held ? 'held' : local ? 'local' : open ? 'open' : 'free';
+                    return (
+                      <button
+                        key={table.id}
+                        data-testid={`table-${table.id}`}
+                        onClick={() => void onTable(table)}
+                        disabled={busy}
+                        className={`group relative flex min-h-32 flex-col items-start justify-between overflow-hidden rounded-2xl border p-4 text-left shadow-sm transition duration-150 hover:-translate-y-0.5 hover:shadow-panel active:translate-y-0 disabled:opacity-50 ${
+                          state === 'open'
+                            ? 'border-ink-900 bg-ink-900 text-white'
+                            : state === 'held'
+                              ? 'border-violet-500 bg-violet-500 text-white'
+                              : state === 'local'
+                                ? 'border-amber-400 bg-amber-400 text-amber-950'
+                                : 'border-stone-200 bg-white text-ink-900'
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-4 right-4 h-2.5 w-2.5 rounded-full ${
+                            state === 'free' ? 'bg-brand-500' : 'bg-white/70'
+                          }`}
+                        />
+                        <div>
+                          <span className="block text-xl font-black tracking-tight">
+                            {table.name}
+                          </span>
+                          <span
+                            className={`mt-1 block text-[11px] font-bold tracking-wide uppercase ${
+                              state === 'free' ? 'text-stone-400' : 'text-white/65'
+                            }`}
+                          >
+                            {state === 'free'
+                              ? 'Siparişe hazır'
+                              : state === 'held'
+                                ? 'Beklemede'
+                                : state === 'local'
+                                  ? 'Senkron bekliyor'
+                                  : 'Aktif adisyon'}
+                          </span>
+                        </div>
+                        {active ? (
+                          <span className="text-base font-black">
+                            {formatKurus(active.grandTotal)}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-semibold text-brand-700">Aç →</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </section>
           );
         })}
       </main>
     </div>
+  );
+}
+
+function Summary({
+  label,
+  value,
+  tone = 'light',
+}: {
+  label: string;
+  value: string | number;
+  tone?: 'light' | 'dark' | 'green';
+}) {
+  return (
+    <div
+      className={`rounded-2xl border p-3 sm:p-4 ${
+        tone === 'dark'
+          ? 'border-ink-900 bg-ink-900 text-white'
+          : tone === 'green'
+            ? 'border-brand-100 bg-brand-50 text-brand-700'
+            : 'border-stone-200 bg-white text-ink-900'
+      }`}
+    >
+      <span className="block truncate text-[10px] font-bold tracking-wide opacity-65 uppercase">
+        {label}
+      </span>
+      <span className="mt-1 block truncate text-lg font-black sm:text-xl">{value}</span>
+    </div>
+  );
+}
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={`h-2 w-2 rounded-full ${color}`} />
+      {label}
+    </span>
   );
 }

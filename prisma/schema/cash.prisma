@@ -42,7 +42,7 @@ model CashTransaction {
   type             String // CashTxnType
   amount           Int // kurus (+/-)
   method           String // PaymentMethod
-  relatedPaymentId String?     @map("related_payment_id")
+  relatedPaymentId String?     @unique @map("related_payment_id")
   relatedExpenseId String?     @map("related_expense_id")
   createdBy        String      @map("created_by")
   note             String?

@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import type { DomainEvent } from '@ado/shared';
+import { newId, type DomainEvent } from '@ado/shared';
+import type { Prisma } from '@prisma/client';
+import { BackgroundWorkerService } from '../worker/worker.service';
 
 /**
  * Merkezi domain event yayincisi. Moduller birbirini DOGRUDAN cagirmaz;
@@ -14,13 +16,39 @@ import type { DomainEvent } from '@ado/shared';
  * Dinleyiciler hizli olmali ya da agir isi Background Worker'a devretmeli.
  */
 @Injectable()
-export class EventBusService {
+export class EventBusService implements OnModuleInit {
   private readonly logger = new Logger(EventBusService.name);
 
-  constructor(private readonly emitter: EventEmitter2) {}
+  constructor(
+    private readonly emitter: EventEmitter2,
+    private readonly worker: BackgroundWorkerService,
+  ) {}
+
+  onModuleInit() {
+    this.worker.registerHandler('domain.event', async (payload) =>
+      this.publish(payload as DomainEvent<string, unknown>, true),
+    );
+  }
+
+  async publishDurable(
+    tx: Prisma.TransactionClient,
+    event: DomainEvent<string, unknown>,
+  ): Promise<void> {
+    await tx.backgroundJob.create({
+      data: {
+        id: newId(),
+        branchId: event.branchId,
+        taskName: 'domain.event',
+        payload: JSON.stringify(event),
+        status: 'pending',
+        runAt: new Date(),
+      },
+    });
+  }
 
   async publish<TName extends string, TPayload>(
     event: DomainEvent<TName, TPayload>,
+    rethrow = false,
   ): Promise<void> {
     try {
       // emitAsync tum dinleyicileri calistirir; bir dinleyici hata verse bile
@@ -32,6 +60,7 @@ export class EventBusService {
           err instanceof Error ? err.message : String(err)
         }`,
       );
+      if (rethrow) throw err;
     }
   }
 }

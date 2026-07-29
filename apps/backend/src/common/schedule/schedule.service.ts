@@ -9,7 +9,7 @@ export class SchedulerService {
 
   constructor(private readonly worker: BackgroundWorkerService) {}
 
-  @Interval(5000) // Her 5 saniyede bir calisir
+  @Interval(1000)
   async handleWorkerTick() {
     if (this.isProcessing) return;
     this.isProcessing = true;

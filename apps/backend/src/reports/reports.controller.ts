@@ -15,10 +15,13 @@ export class ReportsController {
     @Query('start') start: string,
     @Query('end') end: string,
   ) {
+    const now = new Date();
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
     return this.reportsService.getDailySales(
       user,
-      start || new Date().toISOString(),
-      end || new Date().toISOString(),
+      start || today.toISOString(),
+      end || now.toISOString(),
     );
   }
 
@@ -29,10 +32,13 @@ export class ReportsController {
     @Query('start') start: string,
     @Query('end') end: string,
   ) {
+    const now = new Date();
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
     return this.reportsService.getProductSales(
       user,
-      start || new Date().toISOString(),
-      end || new Date().toISOString(),
+      start || today.toISOString(),
+      end || now.toISOString(),
     );
   }
 

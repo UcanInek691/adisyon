@@ -9,7 +9,7 @@ export type LoginDto = z.infer<typeof loginSchema>;
 
 /** Waiter girisi: PIN + (opsiyonel) cihaz kimligi/adi. OFFLINE_DESIGN.md §12. */
 export const loginPinSchema = z.object({
-  pin: z.string().min(3),
+  pin: z.string().regex(/^\d{4,6}$/, 'PIN 4-6 rakam olmali.'),
   deviceId: z.string().optional(),
   deviceName: z.string().optional(),
 });
@@ -27,7 +27,10 @@ export const setupSchema = z.object({
   ownerPassword: z.string().min(6),
   ownerDisplayName: z.string().min(1).optional(),
   waiterUsername: z.string().min(3).optional(),
-  waiterPin: z.string().min(3).optional(),
+  waiterPin: z
+    .string()
+    .regex(/^\d{4,6}$/, 'PIN 4-6 rakam olmali.')
+    .optional(),
 });
 export type SetupDto = z.infer<typeof setupSchema>;
 

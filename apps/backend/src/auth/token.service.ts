@@ -5,6 +5,7 @@ import { AppConfigService } from '../config/app-config.service';
 /** Access token icindeki iddialar (offline'da self-contained yetki icin perms gomulu). */
 export interface AccessTokenPayload {
   sub: string;
+  sid: string;
   username: string;
   role: string;
   branchId: string;

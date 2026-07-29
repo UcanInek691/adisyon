@@ -14,6 +14,7 @@
 /// Bkz. OFFLINE_DESIGN.md §6, §9.1
 model ProcessedClientOp {
   id           String  @id // ULID
+  branchId     String? @map("branch_id")
   clientOpId   String  @unique @map("client_op_id") // ULID (istemci uretimi)
   deviceId     String  @map("device_id")
   mutationType String  @map("mutation_type") // OfflineMutationType
@@ -23,6 +24,7 @@ model ProcessedClientOp {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([deviceId, createdAt])
+  @@index([branchId, createdAt])
   @@map("processed_client_ops")
 }
 

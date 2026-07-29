@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { newId } from '@ado/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export type JobHandler = (payload: any, branchId: string) => Promise<void>;
+export type JobHandler = (payload: unknown, branchId: string) => Promise<void>;
 
 @Injectable()
 export class BackgroundWorkerService implements OnModuleInit {
@@ -11,7 +11,14 @@ export class BackgroundWorkerService implements OnModuleInit {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  onModuleInit() {
+  async onModuleInit() {
+    const staleBefore = new Date(Date.now() - 5 * 60_000);
+    const recovered = await this.prisma.backgroundJob.updateMany({
+      where: { status: 'running', lockedAt: { lt: staleBefore } },
+      data: { status: 'pending', lockedAt: null, runAt: new Date() },
+    });
+    if (recovered.count)
+      this.logger.warn(`${recovered.count} yarim kalmis is yeniden kuyruklandi.`);
     this.logger.log('Background Worker Service initialized');
   }
 
@@ -26,7 +33,7 @@ export class BackgroundWorkerService implements OnModuleInit {
   async enqueue(
     branchId: string,
     taskName: string,
-    payload: any,
+    payload: unknown,
     delaySeconds = 0,
   ): Promise<string> {
     const id = newId();
@@ -50,14 +57,14 @@ export class BackgroundWorkerService implements OnModuleInit {
 
   async processNextJobs(): Promise<number> {
     const now = new Date();
-    // En fazla 5 isi ayni anda alalim
+    // Tek turda kisa sureli POS yogunlugunu erit; kilit her isi yine tek sahipli yapar.
     const jobs = await this.prisma.backgroundJob.findMany({
       where: {
         status: 'pending',
         runAt: { lte: now },
       },
       orderBy: { runAt: 'asc' },
-      take: 5,
+      take: 20,
     });
 
     if (jobs.length === 0) return 0;
@@ -74,22 +81,16 @@ export class BackgroundWorkerService implements OnModuleInit {
   private async runJob(id: string) {
     // Kilitliyoruz
     const job = await this.prisma.$transaction(async (tx) => {
-      const current = await tx.backgroundJob.findUnique({
-        where: { id },
-      });
-
-      if (!current || current.status !== 'pending') {
-        return null;
-      }
-
-      return tx.backgroundJob.update({
-        where: { id },
+      const locked = await tx.backgroundJob.updateMany({
+        where: { id, status: 'pending' },
         data: {
           status: 'running',
           lockedAt: new Date(),
           attempts: { increment: 1 },
         },
       });
+      if (locked.count !== 1) return null;
+      return tx.backgroundJob.findUniqueOrThrow({ where: { id } });
     });
 
     if (!job) return;
@@ -117,8 +118,8 @@ export class BackgroundWorkerService implements OnModuleInit {
         },
       });
       this.logger.log(`Job "${job.taskName}" (${job.id}) completed successfully.`);
-    } catch (err: any) {
-      const errMsg = err?.message || String(err);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Job "${job.taskName}" (${job.id}) failed with error: ${errMsg}`);
       await this.handleJobFailure(job.id, job.attempts, job.maxAttempts, errMsg);
     }
@@ -127,7 +128,7 @@ export class BackgroundWorkerService implements OnModuleInit {
   private async handleJobFailure(id: string, attempts: number, maxAttempts: number, error: string) {
     if (attempts < maxAttempts) {
       // Yeniden dene
-      const backoffSeconds = 5 * attempts; // exponential backoff
+      const backoffSeconds = Math.min(300, 5 * 2 ** Math.max(0, attempts - 1));
       const nextRun = new Date(Date.now() + backoffSeconds * 1000);
       await this.prisma.backgroundJob.update({
         where: { id },

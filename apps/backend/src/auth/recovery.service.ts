@@ -86,9 +86,10 @@ export class RecoveryService {
 
   /** Sahibi icin durum: acik mi, kod uretilmis mi. Kodun kendisi DONMEZ. */
   async status(user: AuthUser): Promise<{ enabled: boolean; hasCode: boolean }> {
+    const stored = await this.readSetting(user.branchId, HASH_KEY);
     return {
       enabled: await this.isEnabled(user.branchId),
-      hasCode: (await this.readSetting(user.branchId, HASH_KEY)) !== undefined,
+      hasCode: typeof stored === 'string' && stored !== '',
     };
   }
 
@@ -162,12 +163,30 @@ export class RecoveryService {
       });
     }
 
-    const stored = await this.readSetting(user.branchId, HASH_KEY);
+    const codeSetting = await this.prisma.applicationSetting.findUnique({
+      where: { branchId_key: { branchId: user.branchId, key: HASH_KEY } },
+    });
+    let stored: unknown;
+    try {
+      stored = codeSetting ? JSON.parse(codeSetting.value) : undefined;
+    } catch {
+      stored = undefined;
+    }
     if (typeof stored !== 'string' || stored === '') throw fail();
     if (!(await argonVerify(stored, normalized))) throw fail();
 
     const passwordHash = await argonHash(newPassword);
     await this.prisma.$transaction(async (tx) => {
+      const consumed = await tx.applicationSetting.updateMany({
+        where: {
+          id: codeSetting!.id,
+          version: codeSetting!.version,
+          value: codeSetting!.value,
+          deletedAt: null,
+        },
+        data: { value: 'null', version: { increment: 1 }, syncState: 'pending' },
+      });
+      if (consumed.count !== 1) throw fail();
       await tx.user.update({
         where: { id: user.id },
         data: {
@@ -184,9 +203,6 @@ export class RecoveryService {
         data: { revokedAt: new Date() },
       });
     });
-
-    // Tek kullanimlik: kod tuketildi.
-    await this.writeSetting(user.branchId, HASH_KEY, null);
 
     await this.audit.record({
       branchId: user.branchId,

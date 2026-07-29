@@ -35,6 +35,9 @@ const userWithRole = {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  // ponytail: tek prosesli yerel sunucu icin IP kilidi yeterli; coklu instance
+  // olursa Redis/DB tabanli ortak rate-limit'e tasinir.
+  private readonly pinAttempts = new Map<string, { count: number; lockedUntil: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -155,8 +158,21 @@ export class AuthService {
 
   // --- Waiter: PIN (+ deviceId) ----------------------------------------------
   async loginPin(dto: LoginPinDto, meta: RequestMeta): Promise<AuthResult> {
+    const attemptKey = meta.ip ?? 'unknown';
+    const attempt = this.pinAttempts.get(attemptKey);
+    if (attempt?.lockedUntil && attempt.lockedUntil > Date.now()) {
+      throw new UnauthorizedException({
+        code: 'ACCOUNT_LOCKED',
+        message: 'Cok fazla hatali PIN denemesi. Lutfen sonra tekrar deneyin.',
+      });
+    }
     const candidates = await this.prisma.user.findMany({
-      where: { deletedAt: null, isActive: true, pinHash: { not: null } },
+      where: {
+        deletedAt: null,
+        isActive: true,
+        pinHash: { not: null },
+        OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }],
+      },
       include: userWithRole,
     });
 
@@ -169,7 +185,14 @@ export class AuthService {
     }
 
     if (!matched) {
-      // Kaba-kuvveti yavaslatmak icin kucuk sabit gecikme.
+      const count =
+        (attempt?.lockedUntil && attempt.lockedUntil <= Date.now() ? 0 : attempt?.count) ?? 0;
+      const next = count + 1;
+      this.pinAttempts.set(attemptKey, {
+        count: next,
+        lockedUntil:
+          next >= this.config.failedLoginMax ? Date.now() + this.config.lockMinutes * 60_000 : 0,
+      });
       await new Promise((r) => setTimeout(r, 300));
       throw new UnauthorizedException({ code: 'INVALID_PIN', message: 'PIN hatali.' });
     }
@@ -179,6 +202,7 @@ export class AuthService {
       : undefined;
 
     await this.registerSuccessfulLogin(matched.id);
+    this.pinAttempts.delete(attemptKey);
     return this.issue(matched, deviceId, meta);
   }
 
@@ -213,6 +237,7 @@ export class AuthService {
     const accessToken = await this.tokens.signAccess(
       {
         sub: user.id,
+        sid: session.id,
         username: user.username,
         role: user.role.name,
         branchId: user.branchId,
@@ -227,7 +252,7 @@ export class AuthService {
   // --- Cikis: kullanicinin aktif oturumlarini iptal --------------------------
   async logout(user: AuthUser): Promise<{ revoked: number }> {
     const res = await this.prisma.session.updateMany({
-      where: { userId: user.userId, revokedAt: null },
+      where: { id: user.sessionId, userId: user.userId, revokedAt: null },
       data: { revokedAt: new Date() },
     });
     return { revoked: res.count };
@@ -296,6 +321,12 @@ export class AuthService {
     const existing = await this.prisma.device.findUnique({ where: { id: deviceId } });
     const now = new Date();
     if (existing) {
+      if (existing.branchId !== branchId || existing.deletedAt) {
+        throw new ForbiddenException({
+          code: 'DEVICE_BRANCH_MISMATCH',
+          message: 'Cihaz bu subeye ait degil.',
+        });
+      }
       await this.prisma.device.update({ where: { id: deviceId }, data: { lastSeenAt: now } });
     } else {
       await this.prisma.device.create({
@@ -348,6 +379,7 @@ export class AuthService {
     const accessToken = await this.tokens.signAccess(
       {
         sub: user.id,
+        sid,
         username: user.username,
         role: user.role.name,
         branchId: user.branchId,

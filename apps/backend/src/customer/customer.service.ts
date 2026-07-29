@@ -6,7 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { newId, DebtTxnType, CashTxnType } from '@ado/shared';
+import { newId, DebtTxnType, CashTxnType, type DomainEvent } from '@ado/shared';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import type {
@@ -65,7 +66,7 @@ export class CustomerService {
     });
     if (!customer) throw new NotFoundException('Müşteri bulunamadı.');
 
-    const data: any = {
+    const data: Prisma.CustomerUpdateInput = {
       version: { increment: 1 },
     };
     if (dto.name !== undefined) data.name = dto.name;
@@ -167,8 +168,13 @@ export class CustomerService {
   // Veresiye Borç & Tahsilat İşlemleri
   // ===========================================================================
   async addDebt(user: AuthUser, customerId: string, dto: AddDebtDto) {
-    const account = await this.prisma.debtAccount.findUnique({
-      where: { customerId },
+    const account = await this.prisma.debtAccount.findFirst({
+      where: {
+        customerId,
+        deletedAt: null,
+        customer: { branchId: user.branchId, deletedAt: null },
+      },
+      include: { customer: true },
     });
     if (!account) throw new NotFoundException('Müşteri veresiye hesabı bulunamadı.');
 
@@ -199,8 +205,12 @@ export class CustomerService {
   }
 
   async payDebt(user: AuthUser, customerId: string, dto: PayDebtDto) {
-    const account = await this.prisma.debtAccount.findUnique({
-      where: { customerId },
+    const account = await this.prisma.debtAccount.findFirst({
+      where: {
+        customerId,
+        deletedAt: null,
+        customer: { branchId: user.branchId, deletedAt: null },
+      },
       include: { customer: true },
     });
     if (!account) throw new NotFoundException('Müşteri veresiye hesabı bulunamadı.');
@@ -230,13 +240,16 @@ export class CustomerService {
       });
 
       // 2. Cari bakiyeyi güncelle
-      await tx.debtAccount.update({
-        where: { id: account.id },
+      const updated = await tx.debtAccount.updateMany({
+        where: { id: account.id, version: account.version },
         data: {
           balance: { decrement: dto.amount },
           version: { increment: 1 },
         },
       });
+      if (updated.count !== 1) {
+        throw new ConflictException('Cari hesap es zamanli olarak degisti. Lutfen tekrar deneyin.');
+      }
 
       // 3. Yalnizca NAKIT tahsilat kasa cekmecesine girer (kart/havale drawer'a girmez).
       const activeSession =
@@ -269,9 +282,28 @@ export class CustomerService {
   // Domain Event Listener
   // ===========================================================================
   @OnEvent('order.paid', { async: true })
-  async handleOrderPaid(event: any) {
-    const { amount, method, orderId, customerId } = event.payload;
+  async handleOrderPaid(
+    event: DomainEvent<
+      'order.paid',
+      {
+        amount: number;
+        method: string;
+        orderId: string;
+        customerId?: string | null;
+        paymentId: string;
+      }
+    >,
+  ) {
+    const { amount, method, orderId, customerId, paymentId } = event.payload;
     if (method !== 'debt') return;
+    if (
+      paymentId &&
+      (await this.prisma.debtTransaction.findUnique({
+        where: { relatedPaymentId: paymentId },
+      }))
+    ) {
+      return;
+    }
 
     if (!customerId) {
       this.logger.error(
@@ -280,8 +312,12 @@ export class CustomerService {
       return;
     }
 
-    const account = await this.prisma.debtAccount.findUnique({
-      where: { customerId },
+    const account = await this.prisma.debtAccount.findFirst({
+      where: {
+        customerId,
+        deletedAt: null,
+        customer: { branchId: event.branchId, deletedAt: null },
+      },
     });
 
     if (!account) {
@@ -301,6 +337,7 @@ export class CustomerService {
           type: DebtTxnType.DebtAdd,
           amount,
           relatedOrderId: orderId,
+          relatedPaymentId: paymentId ?? null,
           createdBy: event.actorId || 'system',
           note: `Adisyon borç kaydı (Ref No: ${orderId})`,
           occurredAt: new Date(),
@@ -319,9 +356,28 @@ export class CustomerService {
   }
 
   @OnEvent('order.refunded', { async: true })
-  async handleOrderRefunded(event: any) {
-    const { amount, method, orderId, customerId } = event.payload;
+  async handleOrderRefunded(
+    event: DomainEvent<
+      'order.refunded',
+      {
+        amount: number;
+        method: string;
+        orderId: string;
+        customerId?: string | null;
+        paymentId: string;
+      }
+    >,
+  ) {
+    const { amount, method, orderId, customerId, paymentId } = event.payload;
     if (method !== 'debt') return;
+    if (
+      paymentId &&
+      (await this.prisma.debtTransaction.findUnique({
+        where: { relatedPaymentId: paymentId },
+      }))
+    ) {
+      return;
+    }
 
     if (!customerId) {
       this.logger.error(
@@ -330,7 +386,13 @@ export class CustomerService {
       return;
     }
 
-    const account = await this.prisma.debtAccount.findUnique({ where: { customerId } });
+    const account = await this.prisma.debtAccount.findFirst({
+      where: {
+        customerId,
+        deletedAt: null,
+        customer: { branchId: event.branchId, deletedAt: null },
+      },
+    });
     if (!account) {
       this.logger.error(`DebtAccount not found for customer: ${customerId}`);
       return;
@@ -349,6 +411,7 @@ export class CustomerService {
           type: DebtTxnType.Payment,
           amount: -amount, // borcu azaltan kayit NEGATIF (payDebt ile ayni isaret; ekstre bakiyesi txn toplamindan yurur)
           relatedOrderId: orderId,
+          relatedPaymentId: paymentId ?? null,
           createdBy: event.actorId || 'system',
           note: `Adisyon iadesi - borç geri alma (Ref No: ${orderId})`,
           occurredAt: new Date(),

@@ -1,39 +1,17 @@
-import {
-  ConflictException,
-  Injectable,
-  Logger,
-  NotFoundException,
-  OnModuleInit,
-} from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
-import { newId, CashTxnType } from '@ado/shared';
+import { newId, CashTxnType, OrderStatus, type DomainEvent } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import type { OpenSessionDto, CloseSessionDto, CreateCashTransactionDto } from './dto/cash.schemas';
 import { businessDayOf } from '../reports/reports.calc';
 
 @Injectable()
-export class CashService implements OnModuleInit {
+export class CashService {
   private readonly logger = new Logger(CashService.name);
 
   constructor(private readonly prisma: PrismaService) {}
-
-  // DB kisiti: sube basina TEK acik oturum. openSession'daki check-then-create
-  // yarisini veritabani seviyesinde kapatir (Prisma parcali index desteklemez,
-  // runtime migrate de yok -> IF NOT EXISTS ile mevcut kurulumlara da ulasir).
-  async onModuleInit(): Promise<void> {
-    try {
-      await this.prisma.$executeRawUnsafe(
-        `CREATE UNIQUE INDEX IF NOT EXISTS "uq_cash_sessions_one_open"
-         ON "cash_sessions"("branch_id") WHERE "status" = 'open' AND "deleted_at" IS NULL`,
-      );
-    } catch (e) {
-      // Mevcut veride zaten cift acik oturum varsa index kurulamaz; uygulama
-      // calismaya devam eder (eski davranis), sadece uyari loglanir.
-      this.logger.warn(`Tek-acik-oturum index'i kurulamadi: ${(e as Error).message}`);
-    }
-  }
 
   // ===========================================================================
   // Cash Session Management
@@ -104,6 +82,20 @@ export class CashService implements OnModuleInit {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const openOrderCount = await tx.order.count({
+        where: {
+          branchId: user.branchId,
+          status: { in: [OrderStatus.Open, OrderStatus.Held] },
+          deletedAt: null,
+        },
+      });
+      if (openOrderCount > 0) {
+        throw new ConflictException({
+          code: 'OPEN_ORDERS_EXIST',
+          message: `${openOrderCount} açık veya bekleyen adisyon varken kasa kapatılamaz.`,
+        });
+      }
+
       // Beklenen tutar = Kasa açılış + tüm hareketler
       const txs = await tx.cashTransaction.findMany({
         where: { cashSessionId: session.id, deletedAt: null },
@@ -131,8 +123,8 @@ export class CashService implements OnModuleInit {
         },
       });
 
-      return tx.cashSession.update({
-        where: { id: session.id },
+      const closed = await tx.cashSession.updateMany({
+        where: { id: session.id, status: 'open', version: session.version },
         data: {
           status: 'closed',
           closedAt: new Date(),
@@ -143,6 +135,10 @@ export class CashService implements OnModuleInit {
           version: { increment: 1 },
         },
       });
+      if (closed.count !== 1) {
+        throw new ConflictException('Kasa oturumu es zamanli olarak kapatildi.');
+      }
+      return tx.cashSession.findUniqueOrThrow({ where: { id: session.id } });
     });
   }
 
@@ -158,6 +154,14 @@ export class CashService implements OnModuleInit {
     });
     if (!session) throw new NotFoundException('Aktif kasa oturumu bulunamadı.');
     return session;
+  }
+
+  async getStatus(user: AuthUser) {
+    const session = await this.prisma.cashSession.findFirst({
+      where: { branchId: user.branchId, status: 'open', deletedAt: null },
+      select: { openedAt: true },
+    });
+    return { open: Boolean(session), openedAt: session?.openedAt ?? null };
   }
 
   // ===========================================================================
@@ -188,11 +192,20 @@ export class CashService implements OnModuleInit {
   // Domain Event Listener
   // ===========================================================================
   @OnEvent('order.paid', { async: true })
-  async handleOrderPaid(event: any) {
+  async handleOrderPaid(
+    event: DomainEvent<'order.paid', { amount: number; method: string; paymentId: string }>,
+  ) {
     const { amount, method, paymentId } = event.payload;
     // Yalnizca nakit odeme kasa cekmecesine girer; kart/havale/qr/veresiye girmez
     // (aksi halde kapanis sayiminda beklenen tutar sismis olur).
     if (method !== 'cash') return;
+    if (
+      await this.prisma.cashTransaction.findUnique({
+        where: { relatedPaymentId: paymentId },
+      })
+    ) {
+      return;
+    }
     this.logger.log(
       `Received order.paid event. Logging cash transaction for payment: ${paymentId}`,
     );
@@ -223,10 +236,19 @@ export class CashService implements OnModuleInit {
   }
 
   @OnEvent('order.refunded', { async: true })
-  async handleOrderRefunded(event: any) {
+  async handleOrderRefunded(
+    event: DomainEvent<'order.refunded', { amount: number; method: string; paymentId: string }>,
+  ) {
     const { amount, method, paymentId } = event.payload;
     // Yalnizca nakit iade cekmeceden cikar (kart/havale/veresiye cekmeceyi etkilemez).
     if (method !== 'cash') return;
+    if (
+      await this.prisma.cashTransaction.findUnique({
+        where: { relatedPaymentId: paymentId },
+      })
+    ) {
+      return;
+    }
 
     const session = await this.prisma.cashSession.findFirst({
       where: { branchId: event.branchId, status: 'open', deletedAt: null },

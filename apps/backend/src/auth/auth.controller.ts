@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { Permission } from '@ado/shared';
 import { Public } from '../common/decorators/public.decorator';
@@ -47,7 +47,16 @@ export class AuthController {
 
   @Public()
   @Post('setup')
-  setup(@Body(new ZodValidationPipe(setupSchema)) dto: SetupDto): Promise<unknown> {
+  setup(
+    @Body(new ZodValidationPipe(setupSchema)) dto: SetupDto,
+    @Req() req: Request,
+  ): Promise<unknown> {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip ?? '')) {
+      throw new ForbiddenException({
+        code: 'SETUP_LOCAL_ONLY',
+        message: 'Ilk kurulum yalnizca ana bilgisayardan yapilabilir.',
+      });
+    }
     return this.auth.setup(dto);
   }
 

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { newId } from '@ado/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -28,56 +29,69 @@ export interface AuditEntry {
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async record(entry: AuditEntry): Promise<string> {
+  async record(entry: AuditEntry, attempt = 0): Promise<string> {
     const oldValue = entry.oldValue === undefined ? null : JSON.stringify(entry.oldValue);
     const newValue = entry.newValue === undefined ? null : JSON.stringify(entry.newValue);
 
-    return this.prisma.$transaction(async (tx) => {
-      const last = await tx.auditLog.findFirst({
-        where: { branchId: entry.branchId },
-        orderBy: { id: 'desc' }, // ULID monotonic -> en son kayit
-        select: { hash: true },
-      });
-      const prevHash = last?.hash ?? GENESIS_HASH;
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const last = await tx.auditLog.findFirst({
+          where: { branchId: entry.branchId },
+          orderBy: [{ sequence: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+          select: { hash: true, sequence: true },
+        });
+        const prevHash = last?.hash ?? GENESIS_HASH;
+        const sequence = (last?.sequence ?? 0) + 1;
 
-      const id = newId();
-      const createdAt = new Date();
-      const payload = JSON.stringify([
-        prevHash,
-        id,
-        entry.branchId,
-        entry.userId ?? '',
-        entry.action,
-        entry.entityType,
-        entry.entityId,
-        oldValue ?? '',
-        newValue ?? '',
-        entry.reason ?? '',
-        createdAt.toISOString(),
-      ]);
-      const hash = createHash('sha256').update(payload).digest('hex');
-
-      await tx.auditLog.create({
-        data: {
-          id,
-          branchId: entry.branchId,
-          userId: entry.userId ?? null,
-          action: entry.action,
-          entityType: entry.entityType,
-          entityId: entry.entityId,
-          oldValue,
-          newValue,
-          reason: entry.reason ?? null,
+        const id = newId();
+        const createdAt = new Date();
+        const payload = JSON.stringify([
           prevHash,
-          hash,
-          createdAt,
-          ...(entry.deviceId ? { deviceId: entry.deviceId } : {}),
-          ...(entry.origin ? { origin: entry.origin } : {}),
-          ...(entry.clientOpId ? { clientOpId: entry.clientOpId } : {}),
-        },
+          id,
+          entry.branchId,
+          entry.userId ?? '',
+          entry.action,
+          entry.entityType,
+          entry.entityId,
+          oldValue ?? '',
+          newValue ?? '',
+          entry.reason ?? '',
+          createdAt.toISOString(),
+        ]);
+        const hash = createHash('sha256').update(payload).digest('hex');
+
+        await tx.auditLog.create({
+          data: {
+            id,
+            branchId: entry.branchId,
+            userId: entry.userId ?? null,
+            action: entry.action,
+            entityType: entry.entityType,
+            entityId: entry.entityId,
+            oldValue,
+            newValue,
+            reason: entry.reason ?? null,
+            prevHash,
+            hash,
+            sequence,
+            createdAt,
+            ...(entry.deviceId ? { deviceId: entry.deviceId } : {}),
+            ...(entry.origin ? { origin: entry.origin } : {}),
+            ...(entry.clientOpId ? { clientOpId: entry.clientOpId } : {}),
+          },
+        });
+        return hash;
       });
-      return hash;
-    });
+    } catch (error) {
+      if (
+        attempt < 2 &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return this.record(entry, attempt + 1);
+      }
+      throw error;
+    }
   }
 
   // Denetim kaydi okuma (raporlar > kayit gecmisi). Salt-okuma; en yeni ustte.
@@ -110,7 +124,7 @@ export class AuditService {
         ...(opts.userId ? { userId: opts.userId } : {}),
         ...(createdAt ? { createdAt } : {}),
       },
-      orderBy: { id: 'desc' }, // ULID monotonic -> en yeni
+      orderBy: [{ sequence: 'desc' }, { createdAt: 'desc' }],
       take: limit,
       select: {
         id: true,
@@ -139,5 +153,36 @@ export class AuditService {
       ...r,
       userName: r.userId ? (nameById.get(r.userId) ?? r.userId) : null,
     }));
+  }
+
+  async verify(
+    branchId: string,
+  ): Promise<{ valid: boolean; count: number; brokenAt: string | null }> {
+    const rows = await this.prisma.auditLog.findMany({
+      where: { branchId },
+      orderBy: [{ sequence: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+    let prevHash = GENESIS_HASH;
+    for (const row of rows) {
+      const payload = JSON.stringify([
+        prevHash,
+        row.id,
+        row.branchId,
+        row.userId ?? '',
+        row.action,
+        row.entityType,
+        row.entityId,
+        row.oldValue ?? '',
+        row.newValue ?? '',
+        row.reason ?? '',
+        row.createdAt.toISOString(),
+      ]);
+      const expected = createHash('sha256').update(payload).digest('hex');
+      if (row.prevHash !== prevHash || row.hash !== expected) {
+        return { valid: false, count: rows.length, brokenAt: row.id };
+      }
+      prevHash = row.hash;
+    }
+    return { valid: true, count: rows.length, brokenAt: null };
   }
 }

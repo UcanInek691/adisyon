@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
@@ -7,6 +7,23 @@ import { businessDayWindow } from './reports.calc';
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private parseRange(start: string, end: string): [Date, Date] {
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    if (
+      !Number.isFinite(startDate.getTime()) ||
+      !Number.isFinite(endDate.getTime()) ||
+      startDate > endDate ||
+      endDate.getTime() - startDate.getTime() > 366 * 86_400_000
+    ) {
+      throw new BadRequestException({
+        code: 'REPORT_RANGE_INVALID',
+        message: 'Rapor tarih araligi gecersiz veya 366 gunden uzun.',
+      });
+    }
+    return [startDate, endDate];
+  }
 
   // Yonteme gore NET tahsilat = charge - refund. Iade kayitlari POZITIF tutar +
   // direction='refund' ile durur; direction'siz toplam iadeyi tahsilat gibi sisirir.
@@ -35,8 +52,7 @@ export class ReportsService {
     const ordersSummary = await this.prisma.order.aggregate({
       where: {
         branchId: user.branchId,
-        status: 'completed',
-        closedAt: { gte: start, lt: end },
+        completedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -53,8 +69,7 @@ export class ReportsService {
       by: ['type'],
       where: {
         branchId: user.branchId,
-        status: 'completed',
-        closedAt: { gte: start, lt: end },
+        completedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -122,8 +137,7 @@ export class ReportsService {
     const ordersSummary = await this.prisma.order.aggregate({
       where: {
         branchId: user.branchId,
-        status: 'completed',
-        closedAt: { gte: start, lt: end },
+        completedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -139,8 +153,7 @@ export class ReportsService {
       by: ['type'],
       where: {
         branchId: user.branchId,
-        status: 'completed',
-        closedAt: { gte: start, lt: end },
+        completedAt: { gte: start, lt: end },
         deletedAt: null,
       },
       _count: { id: true },
@@ -205,7 +218,7 @@ export class ReportsService {
     return {
       sessionId: session.id,
       openedAt: session.openedAt,
-      debtCollectedKurus: debtCollected._sum.amount ?? 0,
+      debtCollectedKurus: -(debtCollected._sum.amount ?? 0),
       recentPayments: recent.map((p) => ({
         id: p.id,
         method: p.method,
@@ -256,15 +269,13 @@ export class ReportsService {
   }
 
   async getDailySales(user: AuthUser, start: string, end: string) {
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+    const [startDate, endDate] = this.parseRange(start, end);
 
     // Completed orders count and sum
     const ordersSummary = await this.prisma.order.aggregate({
       where: {
         branchId: user.branchId,
-        status: 'completed',
-        closedAt: { gte: startDate, lte: endDate },
+        completedAt: { gte: startDate, lte: endDate },
         deletedAt: null,
       },
       _count: { id: true },
@@ -282,8 +293,7 @@ export class ReportsService {
       by: ['type'],
       where: {
         branchId: user.branchId,
-        status: 'completed',
-        closedAt: { gte: startDate, lte: endDate },
+        completedAt: { gte: startDate, lte: endDate },
         deletedAt: null,
       },
       _count: { id: true },
@@ -308,8 +318,7 @@ export class ReportsService {
       where: {
         order: {
           branchId: user.branchId,
-          status: 'completed',
-          closedAt: { gte: startDate, lte: endDate },
+          completedAt: { gte: startDate, lte: endDate },
           deletedAt: null,
         },
         deletedAt: null,
@@ -340,7 +349,7 @@ export class ReportsService {
         receiptNo: r.receiptNo,
         type: r.type, // bill (Hesap) | customer (Ödendi)
         orderNo: r.order.orderNo,
-        printedAt: r.printedAt.toISOString(),
+        printedAt: r.printedAt!.toISOString(),
         totalKurus: r.order.grandTotal,
       })),
       categoryBreakdown: Object.entries(categoryBreakdown).map(([category, totalKurus]) => ({
@@ -351,15 +360,13 @@ export class ReportsService {
   }
 
   async getProductSales(user: AuthUser, start: string, end: string) {
-    const startDate = new Date(start);
-    const endDate = new Date(end);
+    const [startDate, endDate] = this.parseRange(start, end);
 
     const items = await this.prisma.orderItem.findMany({
       where: {
         order: {
           branchId: user.branchId,
-          status: 'completed',
-          closedAt: { gte: startDate, lte: endDate },
+          completedAt: { gte: startDate, lte: endDate },
           deletedAt: null,
         },
         deletedAt: null,

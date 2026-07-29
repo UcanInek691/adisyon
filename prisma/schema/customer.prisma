@@ -57,7 +57,7 @@ model DebtTransaction {
   type             String // debt_add | payment
   amount           Int // kurus (+/-)
   relatedOrderId   String?     @map("related_order_id")
-  relatedPaymentId String?     @map("related_payment_id")
+  relatedPaymentId String?     @unique @map("related_payment_id")
   createdBy        String      @map("created_by")
   note             String?
   occurredAt       DateTime    @map("occurred_at")

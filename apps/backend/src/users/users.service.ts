@@ -93,19 +93,29 @@ export class UsersService {
           message: 'Kendi hesabınızı pasifleştiremezsiniz.',
         });
       }
-      await this.assertNotLastActiveOwner(target.id, target.roleId);
+      await this.assertNotLastActiveOwner(user.branchId, target.id, target.roleId);
     }
 
     if (dto.pin) await this.assertPinUnique(dto.pin, target.id);
 
-    await this.prisma.user.update({
-      where: { id },
-      data: {
-        ...(dto.displayName !== undefined ? { displayName: dto.displayName } : {}),
-        ...(dto.password ? { passwordHash: await argonHash(dto.password) } : {}),
-        ...(dto.pin ? { pinHash: await argonHash(dto.pin) } : {}),
-        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
-      },
+    const passwordHash = dto.password ? await argonHash(dto.password) : undefined;
+    const pinHash = dto.pin ? await argonHash(dto.pin) : undefined;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          ...(dto.displayName !== undefined ? { displayName: dto.displayName } : {}),
+          ...(passwordHash ? { passwordHash } : {}),
+          ...(pinHash ? { pinHash } : {}),
+          ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+        },
+      });
+      if (passwordHash || pinHash || dto.isActive === false) {
+        await tx.session.updateMany({
+          where: { userId: id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
     });
     return { ok: true };
   }
@@ -118,9 +128,15 @@ export class UsersService {
         message: 'Kendi hesabınızı silemezsiniz.',
       });
     }
-    await this.assertNotLastActiveOwner(target.id, target.roleId);
+    await this.assertNotLastActiveOwner(user.branchId, target.id, target.roleId);
 
-    await this.prisma.user.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id }, data: { deletedAt: new Date() } });
+      await tx.session.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    });
     return { ok: true };
   }
 
@@ -135,7 +151,7 @@ export class UsersService {
   }
 
   /** Hedef son aktif owner ise engelle (sistem kilitlenmesin). */
-  private async assertNotLastActiveOwner(targetId: string, targetRoleId: string) {
+  private async assertNotLastActiveOwner(branchId: string, targetId: string, targetRoleId: string) {
     const ownerRole = await this.prisma.role.findFirst({
       where: { name: SystemRole.Owner, isSystem: true, deletedAt: null },
     });
@@ -143,6 +159,7 @@ export class UsersService {
     const otherOwners = await this.prisma.user.count({
       where: {
         roleId: ownerRole.id,
+        branchId,
         isActive: true,
         deletedAt: null,
         id: { not: targetId },

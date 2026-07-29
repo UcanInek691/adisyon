@@ -13,33 +13,59 @@ const KEYS: Record<string, string[][]> = {
 export function useLiveEvents(): void {
   const qc = useQueryClient();
   useEffect(() => {
-    let es: EventSource | null = null;
+    let stopped = false;
+    let abort: AbortController | undefined;
     let timer: number | undefined;
-    const connect = () => {
+    const handle = (raw: string) => {
+      let name = raw;
+      try {
+        const json: unknown = JSON.parse(name);
+        if (json && typeof json === 'object') {
+          name = String((json as { data?: unknown }).data ?? name);
+        }
+      } catch {
+        // duz metin
+      }
+      const prefix = name.split('.')[0] ?? '';
+      for (const key of KEYS[prefix] ?? []) qc.invalidateQueries({ queryKey: key });
+    };
+    const connect = async () => {
       const token = getAccess();
       if (!token) return;
-      es = new EventSource(`/api/v1/events/stream?token=${encodeURIComponent(token)}`);
-      es.onmessage = (e) => {
-        // Sunucu duz olay adi yollar; response zarfina sarilirsa data alanini ac.
-        let name = String(e.data);
-        try {
-          const j: unknown = JSON.parse(name);
-          if (j && typeof j === 'object') name = String((j as { data?: unknown }).data ?? name);
-        } catch {
-          /* duz metin */
+      abort = new AbortController();
+      try {
+        const response = await fetch('/api/v1/events/stream', {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: abort.signal,
+        });
+        if (!response.ok || !response.body) throw new Error(`SSE ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!stopped) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split(/\r?\n\r?\n/);
+          buffer = frames.pop() ?? '';
+          for (const frame of frames) {
+            const data = frame
+              .split(/\r?\n/)
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trimStart())
+              .join('\n');
+            if (data) handle(data);
+          }
         }
-        const prefix = name.split('.')[0] ?? '';
-        for (const key of KEYS[prefix] ?? []) qc.invalidateQueries({ queryKey: key });
-      };
-      es.onerror = () => {
-        // Kopma veya suresi dolmus token: kapat, taze token ile 5 sn sonra yeniden dene.
-        es?.close();
-        timer = window.setTimeout(connect, 5000);
-      };
+      } catch {
+        // Yeniden baglanma asagida.
+      }
+      if (!stopped) timer = window.setTimeout(() => void connect(), 5000);
     };
-    connect();
+    void connect();
     return () => {
-      es?.close();
+      stopped = true;
+      abort?.abort();
       window.clearTimeout(timer);
     };
   }, [qc]);

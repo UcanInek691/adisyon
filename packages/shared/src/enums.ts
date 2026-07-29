@@ -183,6 +183,7 @@ export type OfflineMutationResult =
 
 /** Offline cakisma review nedeni. OFFLINE_DESIGN.md §8 */
 export const OfflineReviewReason = {
+  CashClosed: 'cash_closed',
   TableClosed: 'table_closed',
   TableMoved: 'table_moved',
   ProductInactive: 'product_inactive',

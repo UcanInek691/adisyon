@@ -3,6 +3,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventBusService } from './event-bus.service';
 import { EventLoggerSubscriber } from './event-logger.subscriber';
 import { EventsController } from './events.controller';
+import { BackgroundWorkerModule } from '../worker/worker.module';
 
 /**
  * Global domain event altyapisi. EventBusService her modulde enjekte edilebilir;
@@ -14,6 +15,7 @@ import { EventsController } from './events.controller';
 @Global()
 @Module({
   imports: [
+    BackgroundWorkerModule,
     EventEmitterModule.forRoot({
       wildcard: true,
       delimiter: '.',

@@ -10,7 +10,8 @@ import {
   unlinkSync,
   statSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { newId } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
@@ -20,7 +21,8 @@ const ALGORITHM = 'aes-256-gcm';
 @Injectable()
 export class BackupService {
   private readonly logger = new Logger(BackupService.name);
-  private readonly backupDir = join(process.cwd(), 'prisma', 'backups');
+  private readonly dataDir = this.resolveDataDir();
+  private readonly backupDir = join(this.dataDir, 'backups');
 
   constructor(private readonly prisma: PrismaService) {
     if (!existsSync(this.backupDir)) {
@@ -29,9 +31,21 @@ export class BackupService {
   }
 
   private getEncryptionKey(): Buffer {
-    const rawKey = process.env.BACKUP_ENCRYPTION_KEY || 'default-backups-encryption-key-32';
-    // Make sure it is exactly 32 bytes (256 bits)
+    const rawKey = process.env.BACKUP_ENCRYPTION_KEY?.trim();
+    if (!rawKey) {
+      throw new BadRequestException({
+        code: 'BACKUP_KEY_MISSING',
+        message: 'Yedek sifreleme anahtari tanimli degil.',
+      });
+    }
     return createHash('sha256').update(rawKey).digest();
+  }
+
+  private resolveDataDir(): string {
+    if (process.env.ADO_DATA_DIR?.trim()) return process.env.ADO_DATA_DIR.trim();
+    const databaseUrl = process.env.DATABASE_URL ?? '';
+    if (databaseUrl.startsWith('file:')) return dirname(databaseUrl.slice(5));
+    return join(process.cwd(), 'prisma');
   }
 
   /** Branch bazli ayari oku (JSON deger); yoksa null. */
@@ -66,7 +80,7 @@ export class BackupService {
   async createBackup(
     actor: { branchId: string; userId?: string },
     type: 'auto' | 'manual' | 'pre_update',
-  ): Promise<any> {
+  ) {
     const backupId = newId();
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const tempFile = join(this.backupDir, `temp_${backupId}.db`);
@@ -132,7 +146,7 @@ export class BackupService {
         }
       }
       return { ...backup, cloudCopied };
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error('Failed to create database backup', err);
       // Clean up temp file if it exists
       if (existsSync(tempFile)) {
@@ -142,7 +156,8 @@ export class BackupService {
           // ignore
         }
       }
-      throw new Error(`Backup failed: ${err.message}`);
+      if (err instanceof BadRequestException) throw err;
+      throw new Error(`Backup failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -188,6 +203,22 @@ export class BackupService {
 
     const stagePath = join(this.backupDir, `restore_staging_${backup.id}.db`);
     writeFileSync(stagePath, decrypted);
+    try {
+      const db = new DatabaseSync(stagePath, { readOnly: true });
+      const result = db.prepare('PRAGMA integrity_check').get() as { integrity_check?: string };
+      db.close();
+      if (result.integrity_check !== 'ok') throw new Error(result.integrity_check ?? 'unknown');
+    } catch {
+      if (existsSync(stagePath)) unlinkSync(stagePath);
+      throw new BadRequestException({
+        code: 'BACKUP_CORRUPT',
+        message: 'Yedek SQLite butunluk kontrolunden gecemedi.',
+      });
+    }
+    writeFileSync(
+      join(this.dataDir, 'restore-pending.json'),
+      JSON.stringify({ stagePath, createdAt: new Date().toISOString() }),
+    );
     this.logger.warn(
       `Backup ${backup.id} restore icin hazirlandi: ${stagePath}. Atomik takas yeniden baslatmada yapilir.`,
     );
@@ -219,6 +250,10 @@ export class BackupService {
         this.logger.log(`Deleted backup file from disk: ${backup.path}`);
       } catch (err) {
         this.logger.error(`Failed to delete backup file from disk: ${backup.path}`, err);
+        throw new BadRequestException({
+          code: 'BACKUP_DELETE_FAILED',
+          message: 'Yedek dosyasi diskten silinemedi.',
+        });
       }
     }
 

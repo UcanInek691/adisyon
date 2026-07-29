@@ -32,4 +32,10 @@ export class AuditController {
       ...(limit ? { limit: Number(limit) } : {}),
     });
   }
+
+  @Get('verify')
+  @RequirePermissions(Permission.AuditView)
+  verify(@CurrentUser() user: AuthUser) {
+    return this.audit.verify(user.branchId);
+  }
 }

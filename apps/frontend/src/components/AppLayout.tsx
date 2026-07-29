@@ -10,10 +10,9 @@ import ErrorBoundary from './ErrorBoundary';
 export default function AppLayout({ children }: { children: ReactNode }) {
   const loc = useLocation();
   return (
-    <div className="flex h-full">
+    <div className="flex h-dvh flex-col overflow-hidden bg-stone-100 lg:flex-row">
       <AppSidebar />
-      {/* Yazdirmada overflow-auto icerigi tek sayfaya kirpar -> print'te serbest. */}
-      <div className="min-w-0 flex-1 overflow-auto print:overflow-visible">
+      <div className="order-1 min-h-0 min-w-0 flex-1 overflow-auto print:overflow-visible lg:order-none">
         <ErrorBoundary key={loc.pathname}>{children}</ErrorBoundary>
       </div>
     </div>

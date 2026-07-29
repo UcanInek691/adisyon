@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { newId } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
@@ -13,10 +13,21 @@ export class SettingsService {
       where: { branchId: user.branchId, deletedAt: null },
       orderBy: { key: 'asc' },
     });
-    return rows.map((r) => ({ key: r.key, value: JSON.parse(r.value), updatedAt: r.updatedAt }));
+    return rows
+      .filter((row) => row.key === 'backup.cloudDir' || row.key === 'backup.autoDaily')
+      .map((r) => ({ key: r.key, value: JSON.parse(r.value), updatedAt: r.updatedAt }));
   }
 
   async set(user: AuthUser, key: string, value: unknown) {
+    const valid =
+      (key === 'backup.cloudDir' && typeof value === 'string') ||
+      (key === 'backup.autoDaily' && typeof value === 'boolean');
+    if (!valid) {
+      throw new BadRequestException({
+        code: 'SETTING_NOT_ALLOWED',
+        message: 'Bilinmeyen veya gecersiz ayar.',
+      });
+    }
     const serialized = JSON.stringify(value ?? null);
     const existing = await this.prisma.applicationSetting.findUnique({
       where: { branchId_key: { branchId: user.branchId, key } },

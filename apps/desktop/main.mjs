@@ -2,16 +2,20 @@
 // saglik kontrolu gecince pencereyi acar. UI tamamen backend'in sundugu web.
 import { app, BrowserWindow, dialog } from 'electron';
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
   createWriteStream,
+  renameSync,
+  unlinkSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 
 const PORT = process.env.API_PORT || '3001';
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -28,9 +32,11 @@ function packagedEnv() {
   const dataDir = app.getPath('userData');
   mkdirSync(dataDir, { recursive: true }); // ilk aciliste henuz yok
   const dbPath = join(dataDir, 'ado.db');
+  applyPendingRestore(dataDir, dbPath);
   if (!existsSync(dbPath)) {
     copyFileSync(join(process.resourcesPath, 'template.db'), dbPath);
   }
+  applyMigrations(dbPath);
   const secretsPath = join(dataDir, 'secrets.json');
   if (!existsSync(secretsPath)) {
     writeFileSync(
@@ -45,9 +51,83 @@ function packagedEnv() {
   return {
     NODE_ENV: 'production',
     DATABASE_URL: 'file:' + dbPath.replaceAll('\\', '/'),
+    ADO_DATA_DIR: dataDir,
     API_PORT: PORT,
     ...JSON.parse(readFileSync(secretsPath, 'utf8')),
   };
+}
+
+function applyMigrations(dbPath) {
+  const migrationsDir = join(process.resourcesPath, 'backend', 'prisma', 'migrations');
+  if (!existsSync(migrationsDir)) return;
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(
+      'CREATE TABLE IF NOT EXISTS "_ado_migrations" ("name" TEXT PRIMARY KEY, "applied_at" TEXT NOT NULL)',
+    );
+    const applied = new Set(
+      db
+        .prepare('SELECT "name" FROM "_ado_migrations"')
+        .all()
+        .map((row) => row.name),
+    );
+    const prismaApplied = new Set(
+      db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='_prisma_migrations'`)
+        .get()
+        ? db
+            .prepare('SELECT "migration_name" FROM "_prisma_migrations"')
+            .all()
+            .map((row) => row.migration_name)
+        : [],
+    );
+    for (const name of readdirSync(migrationsDir).sort()) {
+      const sqlPath = join(migrationsDir, name, 'migration.sql');
+      if (!existsSync(sqlPath) || applied.has(name)) continue;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        if (!prismaApplied.has(name)) db.exec(readFileSync(sqlPath, 'utf8'));
+        db.prepare('INSERT INTO "_ado_migrations" ("name", "applied_at") VALUES (?, ?)').run(
+          name,
+          new Date().toISOString(),
+        );
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function applyPendingRestore(dataDir, dbPath) {
+  const markerPath = join(dataDir, 'restore-pending.json');
+  if (!existsSync(markerPath)) return;
+  const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
+  const stagePath = typeof marker.stagePath === 'string' ? resolve(marker.stagePath) : '';
+  const stageRelative = relative(resolve(dataDir), stagePath);
+  if (
+    !stagePath ||
+    stageRelative.startsWith('..') ||
+    isAbsolute(stageRelative) ||
+    !existsSync(stagePath)
+  ) {
+    throw new Error('Gecersiz restore staging kaydi.');
+  }
+  const incoming = join(dataDir, 'ado.restore-incoming.db');
+  const rollback = join(dataDir, `ado.pre-restore-${Date.now()}.db`);
+  copyFileSync(stagePath, incoming);
+  if (existsSync(dbPath)) renameSync(dbPath, rollback);
+  try {
+    renameSync(incoming, dbPath);
+    unlinkSync(stagePath);
+    unlinkSync(markerPath);
+  } catch (error) {
+    if (!existsSync(dbPath) && existsSync(rollback)) renameSync(rollback, dbPath);
+    throw error;
+  }
 }
 
 function startBackend() {

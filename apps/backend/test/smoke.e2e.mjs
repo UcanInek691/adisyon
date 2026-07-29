@@ -1,7 +1,7 @@
 ﻿// E2E smoke â€” calisan sunucuya karsi kritik para yollari.
 // Kullanim: backend'i ayaga kaldir (npm run dev) + seed, sonra: node test/smoke.e2e.mjs
 // Kapsam: merge, split, payment idempotency, reverse (iade), end-of-day, statement CSV.
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -15,6 +15,16 @@ function assert(cond, msg) {
   console.log((cond ? '  âœ“ ' : '  âœ— ') + msg);
 }
 const uid = () => 'op-' + Math.random().toString(36).slice(2) + Date.now();
+async function waitFor(read, accept, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  let value;
+  do {
+    value = await read();
+    if (accept(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  } while (Date.now() < deadline);
+  return value;
+}
 
 async function call(method, path, body, raw = false) {
   const res = await fetch(BASE + path, {
@@ -65,6 +75,31 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
     t3 = await mk('M3'),
     t4 = await mk('M4');
   assert(!!prod.id && !!t1.id, 'katalog + masalar hazir');
+  const { status: cashlessStatus } = await call('POST', '/orders', { tableId: t4.id });
+  assert(cashlessStatus === 409, `acik kasa olmadan adisyon reddedildi (${cashlessStatus})`);
+  const { status: cashOpenStatus } = await call('POST', '/cash/sessions/open', {
+    openingFloat: 0,
+  });
+  assert(cashOpenStatus < 400, `kasa oturumu acildi (${cashOpenStatus})`);
+  const { data: cashStatus } = await call('GET', '/cash/status');
+  assert(cashStatus.open === true, 'kasa durumu acik');
+  const closeGuardOrder = await openOrderWithItem(t4.id, prod.id);
+  const { status: earlyCloseStatus } = await call('POST', '/cash/sessions/close', {
+    countedAmount: 0,
+  });
+  assert(
+    earlyCloseStatus === 409,
+    `acik adisyon varken kasa kapatma reddedildi (${earlyCloseStatus})`,
+  );
+  await call('POST', `/orders/${closeGuardOrder.id}/cancel`, { reason: 'kasa koruma testi' });
+  const { data: printer } = await call('POST', '/printers', {
+    name: 'E2E Mock Printer',
+    driverId: 'escpos-mock',
+    connection: 'usb',
+    paperWidth: '80',
+    isDefault: true,
+  });
+  assert(!!printer.id, 'mock yazici hazir');
 
   // --- MERGE: iki adisyon (10000 + 10000) -> 20000, kaynak iptal ---
   const A = await openOrderWithItem(t1.id, prod.id);
@@ -113,6 +148,23 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
     rev.status === 'refunded' || rev.status === 'open',
     `REVERSE -> refunded/open (${rev.status})`,
   );
+  const { data: repaid } = await call('POST', `/orders/${C.id}/payments`, {
+    method: 'cash',
+    amount: C.grandTotal,
+    idempotencyKey: uid(),
+  });
+  assert(repaid.status === 'completed', `REVERSE sonrasi yeniden odeme (${repaid.status})`);
+  const dailyWithReceipt = await waitFor(
+    async () => (await call('GET', '/reports/sales/daily')).data,
+    (report) =>
+      report?.receipts?.some(
+        (receipt) => receipt.orderNo === C.orderNo && receipt.type === 'customer',
+      ),
+  );
+  const customerReceipts = (dailyWithReceipt?.receipts ?? []).filter(
+    (receipt) => receipt.orderNo === C.orderNo && receipt.type === 'customer',
+  );
+  assert(customerReceipts.length === 1, `odendi fisi tek basildi (${customerReceipts.length})`);
 
   // --- END-OF-DAY ---
   const today = new Date().toISOString().slice(0, 10);
@@ -128,11 +180,12 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
 
   // --- USERS: olustur/listele/pasiflestir/sil + kendi hesabini silme korumasi ---
   const uname = 'garson' + Date.now();
+  const waiterPin = String(Math.floor(100000 + Math.random() * 900000));
   const { data: nu } = await call('POST', '/users', {
     username: uname,
     displayName: 'Test Garson',
     role: 'waiter',
-    pin: '1234',
+    pin: waiterPin,
   });
   assert(!!nu.id, 'USER create (waiter)');
   const { data: ulist } = await call('GET', '/users');
@@ -153,14 +206,17 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   await call('PUT', '/settings/' + encodeURIComponent('backup.cloudDir'), { value: cloudDir });
   const { data: bk } = await call('POST', '/backups');
   assert(bk.cloudCopied === true, `cloud yedek kopyalandi (${bk.cloudCopied})`);
-  assert(readdirSync(cloudDir).length === 1, 'cloud klasorunde 1 dosya var');
+  assert(
+    existsSync(cloudDir) && readdirSync(cloudDir).length === 1,
+    'cloud klasorunde 1 dosya var',
+  );
   await call('PUT', '/settings/' + encodeURIComponent('backup.cloudDir'), { value: '' });
   const { data: bk2 } = await call('POST', '/backups');
   assert(bk2.cloudCopied === false, `cloudDir bos -> kopya yok (${bk2.cloudCopied})`);
 
   // --- SSE: canli sinyal akisi (200 + order.* olayi + tokensiz 401) ---
-  const sse = await fetch(`${BASE}/events/stream?token=${encodeURIComponent(token)}`, {
-    headers: { Accept: 'text/event-stream' },
+  const sse = await fetch(`${BASE}/events/stream`, {
+    headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` },
   });
   assert(sse.status === 200, `SSE baglanti 200 (${sse.status})`);
   assert((sse.headers.get('content-type') || '').includes('text/event-stream'), 'SSE content-type');
@@ -183,6 +239,19 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   const noTok = await fetch(`${BASE}/events/stream`);
   noTok.body?.cancel?.();
   assert(noTok.status === 401, `SSE tokensiz 401 (${noTok.status})`);
+  const queryTok = await fetch(`${BASE}/events/stream?token=${encodeURIComponent(token)}`);
+  queryTok.body?.cancel?.();
+  assert(queryTok.status === 401, `SSE query token reddedildi (${queryTok.status})`);
+
+  // --- GUVENLIK: hassas ayarlar kapali, audit zinciri dogrulanabilir ---
+  const { status: unsafeSetting } = await call(
+    'PUT',
+    '/settings/' + encodeURIComponent('license.enforce'),
+    { value: 'true' },
+  );
+  assert(unsafeSetting === 400, `SETTINGS hassas anahtar reddedildi (${unsafeSetting})`);
+  const { data: auditVerify } = await call('GET', '/audit/verify');
+  assert(auditVerify.valid === true, `AUDIT zinciri gecerli (${auditVerify.valid})`);
 
   // --- SYNC: offline push (applied/duplicate/merge/conflict/review/rejected) ---
   const t6 = await mk('M6');
@@ -315,8 +384,10 @@ async function openOrderWithItem(tableId, prodId, qty = 1000) {
   await call('DELETE', `/orders/${sOrder.id}/items/${itemB.id}`);
   // mutfaga gonder -> yalniz A (2000) duser; silinen B sizmaz
   await call('POST', `/orders/${sOrder.id}/send-kitchen`);
-  await new Promise((r) => setTimeout(r, 400)); // @OnEvent async
-  ({ data: mv } = await call('GET', `/inventory/movements/${stockProd.id}`));
+  mv = await waitFor(
+    async () => (await call('GET', `/inventory/movements/${stockProd.id}`)).data,
+    (rows) => rows?.some((movement) => movement.quantity < 0),
+  );
   const neg = (mv ?? []).filter((m) => m.quantity < 0);
   assert(
     neg.length === 1 && neg[0].quantity === -2000,

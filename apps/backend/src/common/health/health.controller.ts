@@ -31,8 +31,8 @@ export class HealthController {
         try {
           await this.prismaService.$queryRawUnsafe('SELECT 1');
           return { database: { status: 'up' } };
-        } catch (err: any) {
-          return { database: { status: 'down', message: err.message } };
+        } catch {
+          return { database: { status: 'down' } };
         }
       },
       () => this.memory.checkHeap('memory_heap', 150 * 1024 * 1024), // 150MB heap limit

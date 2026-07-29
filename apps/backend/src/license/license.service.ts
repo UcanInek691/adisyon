@@ -43,6 +43,7 @@ export class LicenseService {
 
   /** Zorunluluk ayari. Ayar yoksa/bozuksa KAPALI kabul edilir (guvenli varsayilan). */
   async isEnforced(branchId: string): Promise<boolean> {
+    if (!hasPublicKey()) return false;
     const row = await this.prisma.applicationSetting.findUnique({
       where: { branchId_key: { branchId, key: ENFORCE_KEY } },
     });

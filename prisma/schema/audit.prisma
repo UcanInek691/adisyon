@@ -17,6 +17,7 @@ model AuditLog {
   reason     String?
   prevHash   String  @map("prev_hash")
   hash       String // H(prev_hash + kayit alanlari)
+  sequence   Int?
 
   createdAt DateTime @default(now()) @map("created_at")
   deviceId  String?  @map("device_id")
@@ -27,6 +28,7 @@ model AuditLog {
   clientOpId      String?   @map("client_op_id") // offline ise iliskili mutasyon ULID
   clientCreatedAt DateTime? @map("client_created_at") // offline ise istemci uretim zamani
 
+  @@unique([branchId, sequence])
   @@index([createdAt])
   @@index([entityType, entityId])
   @@index([action])

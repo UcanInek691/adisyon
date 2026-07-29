@@ -4,15 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { api, ApiError, hasPerm } from '../lib/api';
 import type { AppSetting, Backup } from '../lib/types';
 
-// Girilen metni JSON olarak dene; olmazsa duz metin olarak kaydet.
-const parseValue = (raw: string): unknown => {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
-};
-const showValue = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 const fmtDateTime = (iso: string) => new Date(iso).toLocaleString('tr-TR');
 const fmtSize = (bytes: number) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
@@ -48,7 +39,6 @@ export default function AyarlarScreen() {
         <ServerInfoCard />
         <LicenseCard onError={fail} />
         {hasPerm('user.manage') && <RecoveryCard onError={fail} />}
-        {hasPerm('settings.manage') && <SettingsCard onError={fail} />}
         {hasPerm('backup.manage') && (
           <BackupCard
             onError={fail}
@@ -280,103 +270,6 @@ function RecoveryCard({ onError }: { onError: (e: unknown) => void }) {
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function SettingsCard({ onError }: { onError: (e: unknown) => void }) {
-  const qc = useQueryClient();
-  const [newKey, setNewKey] = useState('');
-  const [newValue, setNewValue] = useState('');
-  // Duzenlenen satirlar: key -> taslak metin
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-
-  const settings = useQuery({
-    queryKey: ['settings'],
-    queryFn: () => api<AppSetting[]>('/settings'),
-  });
-
-  const save = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: unknown }) =>
-      api(`/settings/${encodeURIComponent(key)}`, { method: 'PUT', body: { value } }),
-    onSuccess: (_d, { key }) => {
-      setDrafts(({ [key]: _gone, ...rest }) => rest);
-      setNewKey('');
-      setNewValue('');
-      qc.invalidateQueries({ queryKey: ['settings'] });
-    },
-    onError,
-  });
-
-  return (
-    <div className="rounded-2xl bg-white p-4 shadow">
-      <h2 className="mb-2 font-bold text-slate-800">Uygulama Ayarları</h2>
-      {settings.isLoading && <p className="text-sm text-slate-400">Yükleniyor…</p>}
-      <ul className="divide-y">
-        {(settings.data ?? []).map((s) => {
-          const draft = drafts[s.key];
-          const editing = draft !== undefined;
-          return (
-            <li key={s.key} className="flex items-center gap-2 py-2 text-sm">
-              <span className="min-w-0 flex-1 truncate font-medium text-slate-600">{s.key}</span>
-              {editing ? (
-                <>
-                  <input
-                    value={draft}
-                    onChange={(e) => setDrafts({ ...drafts, [s.key]: e.target.value })}
-                    className="w-32 rounded-lg border border-slate-300 px-2 py-1"
-                  />
-                  <button
-                    onClick={() => save.mutate({ key: s.key, value: parseValue(draft) })}
-                    disabled={save.isPending}
-                    className="rounded-lg bg-green-600 px-2 py-1 font-medium text-white disabled:opacity-40"
-                  >
-                    Kaydet
-                  </button>
-                  <button
-                    onClick={() => setDrafts(({ [s.key]: _gone, ...rest }) => rest)}
-                    className="rounded-lg bg-slate-200 px-2 py-1 font-medium"
-                  >
-                    Vazgeç
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="max-w-32 truncate text-slate-500">{showValue(s.value)}</span>
-                  <button
-                    onClick={() => setDrafts({ ...drafts, [s.key]: showValue(s.value) })}
-                    className="rounded-lg bg-slate-200 px-2 py-1 font-medium"
-                  >
-                    Düzenle
-                  </button>
-                </>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-
-      <div className="mt-3 flex gap-2">
-        <input
-          value={newKey}
-          onChange={(e) => setNewKey(e.target.value)}
-          placeholder="Anahtar"
-          className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm"
-        />
-        <input
-          value={newValue}
-          onChange={(e) => setNewValue(e.target.value)}
-          placeholder="Değer"
-          className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm"
-        />
-        <button
-          onClick={() => save.mutate({ key: newKey.trim(), value: parseValue(newValue) })}
-          disabled={save.isPending || newKey.trim() === ''}
-          className="rounded-lg bg-slate-700 px-3 py-1 text-sm font-medium text-white disabled:opacity-40"
-        >
-          Ekle
-        </button>
-      </div>
     </div>
   );
 }

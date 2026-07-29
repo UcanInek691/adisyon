@@ -41,6 +41,11 @@ export class CashController {
     return this.cashService.getActiveSession(user);
   }
 
+  @Get('status')
+  getStatus(@CurrentUser() user: AuthUser) {
+    return this.cashService.getStatus(user);
+  }
+
   @Post('transactions')
   @RequirePermissions(Permission.CashManage)
   createTransaction(

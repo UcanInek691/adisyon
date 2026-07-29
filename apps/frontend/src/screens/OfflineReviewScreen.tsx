@@ -9,6 +9,7 @@ import { readProducts, readTables } from '../offline/read';
 
 // Cakisan offline mutasyonlarin Owner onay ekrani. OFFLINE_DESIGN.md §8, §9.2
 const REASON: Record<string, string> = {
+  cash_closed: 'Kasa oturumu kapalı',
   table_closed: 'Masa kapatılmış',
   table_moved: 'Masa taşınmış / birleştirilmiş',
   product_inactive: 'Ürün pasif',

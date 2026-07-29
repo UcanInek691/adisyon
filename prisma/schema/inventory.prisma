@@ -91,6 +91,7 @@ model StockMovement {
   deviceId  String?   @map("device_id")
   syncState String    @default("pending") @map("sync_state")
 
+  @@unique([relatedOrderItemId, type])
   @@index([productId])
   @@map("stock_movements")
 }

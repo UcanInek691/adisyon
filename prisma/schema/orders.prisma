@@ -20,6 +20,7 @@ model Order {
   openedAt      DateTime        @map("opened_at")
   closedBy      String?         @map("closed_by")
   closedAt      DateTime?       @map("closed_at")
+  completedAt   DateTime?       @map("completed_at") // ilk tam odeme zamani, iade silmez
   guestCount    Int             @default(1) @map("guest_count")
   note          String?
   subtotal      Int             @default(0) // kurus
@@ -49,6 +50,7 @@ model Order {
 
   @@unique([branchId, orderNo])
   @@index([branchId, status])
+  @@index([branchId, completedAt])
   @@index([tableId])
   @@map("orders")
 }
@@ -94,6 +96,7 @@ model OrderItemNote {
   note        String
   type        String // waiter | kitchen
   createdBy   String    @map("created_by")
+  clientOpId  String?   @unique @map("client_op_id")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

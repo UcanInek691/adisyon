@@ -18,9 +18,10 @@ model Payment {
   received          Int       @default(0) // nakit verilen
   change            Int       @default(0) // para ustu
   reference         String? // kart/havale ref
+  customerId        String?   @map("customer_id") // method=debt icin kaynak musteri
   takenBy           String    @map("taken_by")
   paidAt            DateTime  @map("paid_at")
-  reversesPaymentId String?   @map("reverses_payment_id")
+  reversesPaymentId String?   @unique @map("reverses_payment_id")
   reverses          Payment?  @relation("PaymentReversal", fields: [reversesPaymentId], references: [id])
   reversedBy        Payment[] @relation("PaymentReversal")
   idempotencyKey    String    @unique @map("idempotency_key")
@@ -33,6 +34,7 @@ model Payment {
   syncState String    @default("pending") @map("sync_state")
 
   @@index([orderId])
+  @@index([customerId])
   @@map("payments")
 }
 
@@ -42,7 +44,8 @@ model Receipt {
   order           Order     @relation(fields: [orderId], references: [id])
   receiptNo       String    @map("receipt_no")
   type            String // customer | kitchen | bar
-  printedAt       DateTime  @map("printed_at")
+  printedAt       DateTime? @map("printed_at")
+  printJobId      String?   @unique @map("print_job_id")
   printerId       String?   @map("printer_id")
   printer         Printer?  @relation(fields: [printerId], references: [id])
   contentSnapshot String    @map("content_snapshot") // yapisal JSON (TEXT)

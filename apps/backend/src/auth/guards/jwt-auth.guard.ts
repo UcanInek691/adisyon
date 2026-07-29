@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { TokenService } from '../token.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /** Bearer access token dogrular; req.user'i doldurur. @Public() ile atlanir. */
 @Injectable()
@@ -11,6 +12,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly tokens: TokenService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -22,12 +24,7 @@ export class JwtAuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<Request & { user?: AuthUser }>();
     const header = req.headers.authorization;
-    // EventSource ozel header tasiyamaz; SSE akisi icin token ?token= query'den de kabul edilir.
-    const token = header?.startsWith('Bearer ')
-      ? header.slice('Bearer '.length)
-      : typeof req.query.token === 'string'
-        ? req.query.token
-        : undefined;
+    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
     if (!token) {
       throw new UnauthorizedException({
         code: 'NO_TOKEN',
@@ -37,8 +34,24 @@ export class JwtAuthGuard implements CanActivate {
 
     try {
       const payload = await this.tokens.verifyAccess(token);
+      const session = await this.prisma.session.findFirst({
+        where: {
+          id: payload.sid,
+          userId: payload.sub,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+          user: {
+            branchId: payload.branchId,
+            isActive: true,
+            deletedAt: null,
+          },
+        },
+        select: { id: true },
+      });
+      if (!session) throw new Error('revoked session');
       const user: AuthUser = {
         userId: payload.sub,
+        sessionId: payload.sid,
         username: payload.username,
         role: payload.role,
         branchId: payload.branchId,

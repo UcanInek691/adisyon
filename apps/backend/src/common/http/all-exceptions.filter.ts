@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
 
 interface ErrorBody {
   code: string;
@@ -57,6 +58,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         field: i.path.join('.') || '(root)',
         issue: i.message,
       }));
+    } else if (
+      exception instanceof Prisma.PrismaClientKnownRequestError &&
+      (exception.code === 'P2002' || exception.code === 'P2003')
+    ) {
+      status = HttpStatus.CONFLICT;
+      body.code = 'DATA_CONFLICT';
+      body.message = 'Kayit baska bir islemle cakisti. Veriyi yenileyip tekrar deneyin.';
     } else if (exception instanceof HttpException) {
       status = exception.getStatus();
       const resp = exception.getResponse();
@@ -67,8 +75,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
         if (typeof r['code'] === 'string') body.code = r['code'];
         if (typeof r['message'] === 'string') body.message = r['message'];
       }
-    } else if (exception instanceof Error) {
-      body.message = exception.message;
     }
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {

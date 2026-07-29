@@ -54,17 +54,18 @@ model PrintRoute {
 }
 
 model PrintJob {
-  id           String    @id
-  branchId     String    @map("branch_id")
-  printerId    String    @map("printer_id")
-  printer      Printer   @relation(fields: [printerId], references: [id])
-  documentType String    @map("document_type")
-  payload      String // soyut PrintDocument (JSON TEXT)
-  status       String    @default("queued") // PrintJobStatus
-  attempts     Int       @default(0)
-  lastError    String?   @map("last_error")
-  createdBy    String    @map("created_by")
-  printedAt    DateTime? @map("printed_at")
+  id            String    @id
+  branchId      String    @map("branch_id")
+  printerId     String    @map("printer_id")
+  printer       Printer   @relation(fields: [printerId], references: [id])
+  documentType  String    @map("document_type")
+  sourceEventId String?   @map("source_event_id")
+  payload       String // soyut PrintDocument (JSON TEXT)
+  status        String    @default("queued") // PrintJobStatus
+  attempts      Int       @default(0)
+  lastError     String?   @map("last_error")
+  createdBy     String    @map("created_by")
+  printedAt     DateTime? @map("printed_at")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -73,6 +74,7 @@ model PrintJob {
   deviceId  String?   @map("device_id")
   syncState String    @default("pending") @map("sync_state")
 
+  @@unique([sourceEventId, printerId, documentType])
   @@index([status])
   @@map("print_jobs")
 }

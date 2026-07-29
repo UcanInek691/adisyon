@@ -6,7 +6,9 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { newId, PrintJobStatus, DocumentType } from '@ado/shared';
+import { spawn } from 'node:child_process';
+import { newId, PrintJobStatus, DocumentType, type DomainEvent } from '@ado/shared';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BackgroundWorkerService } from '../common/worker/worker.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
@@ -16,26 +18,100 @@ import type {
   CreatePrintRouteDto,
 } from './dto/printing.schemas';
 
+type PrintItem = {
+  name?: string;
+  quantity?: number;
+  price?: number;
+  total?: number;
+};
+
+type PrintPayload = {
+  text?: string;
+  title?: string;
+  orderNo?: string;
+  date?: string;
+  items?: PrintItem[];
+  discount?: number;
+  grandTotal?: number;
+};
+
+type DiscoveredPrinter = { id: string; name: string };
+type PrintableOrder = Prisma.OrderGetPayload<{
+  include: { items: { include: { product: true } } };
+}>;
+
 export interface PrinterDriver {
-  print(payload: any, connection: string, address: string | null): Promise<void>;
-  discover(): Promise<any[]>;
-  getCapabilities(): any;
+  print(payload: PrintPayload, connection: string, address: string | null): Promise<void>;
+  discover(): Promise<DiscoveredPrinter[]>;
+  getCapabilities(): Record<string, boolean>;
 }
 
 class MockPrinterDriver implements PrinterDriver {
   private readonly logger = new Logger(MockPrinterDriver.name);
 
-  async print(payload: any, connection: string, address: string | null): Promise<void> {
+  async print(payload: PrintPayload, connection: string, address: string | null): Promise<void> {
     this.logger.log(`[PRINT SIMULATION] connection=${connection}, address=${address}`);
     this.logger.log(`[PRINT CONTENT] ${JSON.stringify(payload, null, 2)}`);
   }
 
-  async discover(): Promise<any[]> {
+  async discover(): Promise<DiscoveredPrinter[]> {
     return [{ id: 'mock-usb-1', name: 'Mock USB Thermal Printer' }];
   }
 
   getCapabilities() {
     return { cutter: true, drawer: true, qr: true };
+  }
+}
+
+function printText(payload: PrintPayload): string {
+  if (payload.text) return `${payload.text}\r\n\r\n`;
+  const lines = [String(payload.title ?? ''), `Adisyon: ${payload.orderNo ?? '-'}`, ''];
+  for (const item of payload.items ?? []) {
+    const quantity = item.quantity ?? 1;
+    const total = item.total === undefined ? '' : `  ${Number(item.total).toFixed(2)} TL`;
+    lines.push(`${quantity} x ${item.name ?? ''}${total}`);
+  }
+  if (payload.discount) lines.push(`Indirim: ${Number(payload.discount).toFixed(2)} TL`);
+  if (payload.grandTotal !== undefined) {
+    lines.push('', `TOPLAM: ${Number(payload.grandTotal).toFixed(2)} TL`);
+  }
+  return `${lines.join('\r\n')}\r\n\r\n`;
+}
+
+class WindowsSpoolerDriver implements PrinterDriver {
+  async print(payload: PrintPayload, connection: string, address: string | null): Promise<void> {
+    if (process.platform !== 'win32' || connection !== 'windows_spooler' || !address) {
+      throw new Error('Windows spooler yazici adi tanimli degil.');
+    }
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '$input | Out-Printer -Name $args[0]',
+          address,
+        ],
+        { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true },
+      );
+      let error = '';
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => (error += chunk));
+      child.on('error', reject);
+      child.on('close', (code) =>
+        code === 0 ? resolve() : reject(new Error(error.trim() || `Print exit ${code}`)),
+      );
+      child.stdin.end(printText(payload), 'utf8');
+    });
+  }
+
+  async discover(): Promise<DiscoveredPrinter[]> {
+    return [];
+  }
+
+  getCapabilities() {
+    return { cutter: false, drawer: false, qr: false };
   }
 }
 
@@ -51,22 +127,33 @@ export class PrintingService implements OnModuleInit {
 
   onModuleInit() {
     // Referans sürücüyü kaydet
-    this.drivers.set('escpos-mock', new MockPrinterDriver());
+    this.drivers.set('windows-spooler', new WindowsSpoolerDriver());
+    if (process.env.NODE_ENV !== 'production') {
+      this.drivers.set('escpos-mock', new MockPrinterDriver());
+    }
     this.logger.log('Printer drivers initialized.');
 
     // Arka plan iş kuyruğu dinleyicisini kaydet
-    this.worker.registerHandler(
-      'print.job',
-      async (payload: { jobId: string }, _branchId: string) => {
-        await this.executePrintJob(payload.jobId);
-      },
-    );
+    this.worker.registerHandler('print.job', async (payload, _branchId: string) => {
+      if (
+        typeof payload !== 'object' ||
+        payload === null ||
+        !('jobId' in payload) ||
+        typeof payload.jobId !== 'string'
+      ) {
+        throw new Error('Gecersiz print.job payload.');
+      }
+      await this.executePrintJob(payload.jobId);
+    });
   }
 
   // ===========================================================================
   // Printer CRUD
   // ===========================================================================
   async createPrinter(user: AuthUser, dto: CreatePrinterDto) {
+    if (!this.drivers.has(dto.driverId)) {
+      throw new NotFoundException('Yazici surucusu bulunamadi.');
+    }
     const id = newId();
 
     return this.prisma.$transaction(async (tx) => {
@@ -102,6 +189,9 @@ export class PrintingService implements OnModuleInit {
     });
     if (!printer) throw new NotFoundException('Yazıcı bulunamadı.');
 
+    if (dto.driverId && !this.drivers.has(dto.driverId)) {
+      throw new NotFoundException('Yazici surucusu bulunamadi.');
+    }
     return this.prisma.$transaction(async (tx) => {
       if (dto.isDefault) {
         await tx.printer.updateMany({
@@ -110,7 +200,7 @@ export class PrintingService implements OnModuleInit {
         });
       }
 
-      const data: any = {
+      const data: Prisma.PrinterUpdateInput = {
         version: { increment: 1 },
       };
       if (dto.name !== undefined) data.name = dto.name;
@@ -158,7 +248,12 @@ export class PrintingService implements OnModuleInit {
   async createRoute(user: AuthUser, dto: CreatePrintRouteDto) {
     // Yazıcıyı doğrula
     const printer = await this.prisma.printer.findFirst({
-      where: { id: dto.printerId, branchId: user.branchId, deletedAt: null },
+      where: {
+        id: dto.printerId,
+        branchId: user.branchId,
+        deletedAt: null,
+        isActive: true,
+      },
     });
     if (!printer) throw new NotFoundException('Yazıcı bulunamadı.');
 
@@ -218,25 +313,90 @@ export class PrintingService implements OnModuleInit {
     branchId: string,
     printerId: string,
     documentType: string,
-    payload: any,
+    payload: PrintPayload,
     createdBy: string,
+    receipt?: { orderId: string; orderNo: string; type: string },
+    sourceEventId?: string,
   ): Promise<string> {
+    if (sourceEventId) {
+      const existing = await this.prisma.printJob.findUnique({
+        where: {
+          sourceEventId_printerId_documentType: {
+            sourceEventId,
+            printerId,
+            documentType,
+          },
+        },
+      });
+      if (existing) return existing.id;
+    }
     const id = newId();
 
-    await this.prisma.printJob.create({
-      data: {
-        id,
-        branchId,
-        printerId,
-        documentType,
-        payload: JSON.stringify(payload),
-        status: PrintJobStatus.Queued,
-        createdBy,
-      },
-    });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.printJob.create({
+          data: {
+            id,
+            branchId,
+            printerId,
+            documentType,
+            sourceEventId: sourceEventId ?? null,
+            payload: JSON.stringify(payload),
+            status: PrintJobStatus.Queued,
+            createdBy,
+          },
+        });
+        await tx.backgroundJob.create({
+          data: {
+            id: newId(),
+            branchId,
+            taskName: 'print.job',
+            payload: JSON.stringify({ jobId: id }),
+            status: 'pending',
+            runAt: new Date(),
+          },
+        });
+        if (receipt) {
+          const seq = await tx.receipt.count({
+            where: { orderId: receipt.orderId, type: receipt.type },
+          });
+          await tx.receipt.create({
+            data: {
+              id: newId(),
+              orderId: receipt.orderId,
+              receiptNo: `${receipt.orderNo}-${receipt.type[0]!.toUpperCase()}${seq + 1}`,
+              type: receipt.type,
+              printedAt: null,
+              printJobId: id,
+              printerId,
+              contentSnapshot: JSON.stringify(payload),
+            },
+          });
+        }
+      });
+    } catch (error) {
+      if (
+        sourceEventId &&
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'P2002'
+      ) {
+        const existing = await this.prisma.printJob.findUnique({
+          where: {
+            sourceEventId_printerId_documentType: {
+              sourceEventId,
+              printerId,
+              documentType,
+            },
+          },
+        });
+        if (existing) return existing.id;
+      }
+      throw error;
+    }
 
     // Worker'a gönder
-    await this.worker.enqueue(branchId, 'print.job', { jobId: id });
     return id;
   }
 
@@ -247,6 +407,9 @@ export class PrintingService implements OnModuleInit {
     });
 
     if (!job || job.status === PrintJobStatus.Done) return;
+    if (!job.printer.isActive || job.printer.deletedAt) {
+      throw new Error('Yazici aktif degil.');
+    }
 
     await this.prisma.printJob.update({
       where: { id: jobId },
@@ -265,15 +428,22 @@ export class PrintingService implements OnModuleInit {
     }
 
     try {
-      const parsedPayload = JSON.parse(job.payload);
+      const parsedPayload = JSON.parse(job.payload) as PrintPayload;
       await driver.print(parsedPayload, job.printer.connection, job.printer.address);
 
-      await this.prisma.printJob.update({
-        where: { id: jobId },
-        data: { status: PrintJobStatus.Done, printedAt: new Date() },
+      const printedAt = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        await tx.printJob.update({
+          where: { id: jobId },
+          data: { status: PrintJobStatus.Done, printedAt },
+        });
+        await tx.receipt.updateMany({
+          where: { printJobId: jobId },
+          data: { printedAt },
+        });
       });
-    } catch (err: any) {
-      const errorMsg = err?.message || String(err);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
       await this.prisma.printJob.update({
         where: { id: jobId },
         data: { status: PrintJobStatus.Failed, lastError: errorMsg },
@@ -286,13 +456,13 @@ export class PrintingService implements OnModuleInit {
   // Domain Event Abonesi
   // ===========================================================================
   @OnEvent('order.paid', { async: true })
-  async handleOrderPaid(event: any) {
+  async handleOrderPaid(event: DomainEvent<'order.paid', { orderId: string }>) {
     const { orderId } = event.payload;
     this.logger.log(`Received order.paid event for order: ${orderId}`);
 
     // Sipariş verilerini DB'den çek (iptal/silinmiş kalemler fişe girmez)
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, branchId: event.branchId, deletedAt: null },
       include: {
         items: {
           where: { deletedAt: null, status: { not: 'cancelled' } },
@@ -325,29 +495,35 @@ export class PrintingService implements OnModuleInit {
       DocumentType.Customer,
       printDoc,
       event.actorId || 'system',
+      { orderId: order.id, orderNo: order.orderNo, type: DocumentType.Customer },
+      `order:${order.id}:paid`,
     );
-    await this.persistReceipt(order.id, order.orderNo, DocumentType.Customer, printerId, printDoc);
   }
 
   // Müşteri fişi yazıcısı: önce rota, yoksa varsayılan yazıcı.
   private async resolveCustomerPrinterId(branchId: string): Promise<string | undefined> {
     const route = await this.prisma.printRoute.findFirst({
-      where: { branchId, documentType: DocumentType.Customer, deletedAt: null },
+      where: {
+        branchId,
+        documentType: DocumentType.Customer,
+        deletedAt: null,
+        printer: { isActive: true, deletedAt: null },
+      },
     });
     if (route?.printerId) return route.printerId;
     const defaultPrinter = await this.prisma.printer.findFirst({
-      where: { branchId, isDefault: true, deletedAt: null },
+      where: { branchId, isDefault: true, isActive: true, deletedAt: null },
     });
     return defaultPrinter?.id;
   }
 
   // Soyut PrintDocument (müşteri fişi / hesap fişi ortak gövde). Başlık ayırt eder.
-  private buildCustomerDoc(order: any, title: string) {
+  private buildCustomerDoc(order: PrintableOrder, title: string): PrintPayload {
     return {
       title,
       orderNo: order.orderNo,
       date: order.openedAt.toISOString(),
-      items: order.items.map((item: any) => ({
+      items: order.items.map((item) => ({
         name: item.productNameSnapshot || item.product.name,
         quantity: item.quantity / 1000,
         price: item.unitPrice / 100,
@@ -389,17 +565,32 @@ export class PrintingService implements OnModuleInit {
       DocumentType.Customer,
       printDoc,
       user.userId,
+      { orderId: order.id, orderNo: order.orderNo, type: 'bill' },
     );
-    await this.persistReceipt(order.id, order.orderNo, 'bill', printerId, printDoc);
     return { ok: true };
   }
 
   @OnEvent('order.item.sent', { async: true })
-  async handleOrderItemSent(event: any) {
+  async handleOrderItemSent(
+    event: DomainEvent<
+      'order.item.sent',
+      {
+        orderId: string;
+        items: Array<{
+          productId: string;
+          productName: string;
+          quantity: number;
+          orderItemId: string;
+        }>;
+      }
+    >,
+  ) {
     const { orderId, items } = event.payload;
     this.logger.log(`Received order.item.sent for order: ${orderId} (${items.length} kalem)`);
 
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, branchId: event.branchId, deletedAt: null },
+    });
     if (!order) {
       this.logger.error(`Order not found for kitchen ticket: ${orderId}`);
       return;
@@ -410,7 +601,7 @@ export class PrintingService implements OnModuleInit {
       ...new Set(items.map((i: { productId?: string }) => i.productId).filter(Boolean)),
     ] as string[];
     const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds } },
+      where: { id: { in: productIds }, branchId: event.branchId, deletedAt: null },
       select: { id: true, categoryId: true },
     });
     const catOf = new Map(products.map((p) => [p.id, p.categoryId]));
@@ -422,6 +613,7 @@ export class PrintingService implements OnModuleInit {
         branchId: event.branchId,
         documentType: { in: [DocumentType.Kitchen, DocumentType.Bar] },
         deletedAt: null,
+        printer: { isActive: true, deletedAt: null },
       },
     });
     type Target = { printerId: string; documentType: string };
@@ -436,7 +628,12 @@ export class PrintingService implements OnModuleInit {
     }
     if (!general) {
       const def = await this.prisma.printer.findFirst({
-        where: { branchId: event.branchId, isDefault: true, deletedAt: null },
+        where: {
+          branchId: event.branchId,
+          isDefault: true,
+          isActive: true,
+          deletedAt: null,
+        },
       });
       if (def) general = { printerId: def.id, documentType: DocumentType.Kitchen };
     }
@@ -472,30 +669,11 @@ export class PrintingService implements OnModuleInit {
         g.documentType,
         printDoc,
         event.actorId || 'system',
+        { orderId: order.id, orderNo: order.orderNo, type: g.documentType },
+        event.eventId,
       );
-      await this.persistReceipt(order.id, order.orderNo, g.documentType, g.printerId, printDoc);
     }
   }
 
   // Basılan fişi kalıcı kaydeder (reprint + audit için). receiptNo: orderNo-<tip><sıra>.
-  private async persistReceipt(
-    orderId: string,
-    orderNo: string,
-    type: string,
-    printerId: string,
-    content: unknown,
-  ): Promise<void> {
-    const seq = await this.prisma.receipt.count({ where: { orderId, type } });
-    await this.prisma.receipt.create({
-      data: {
-        id: newId(),
-        orderId,
-        receiptNo: `${orderNo}-${type[0]!.toUpperCase()}${seq + 1}`,
-        type,
-        printedAt: new Date(),
-        printerId,
-        contentSnapshot: JSON.stringify(content),
-      },
-    });
-  }
 }

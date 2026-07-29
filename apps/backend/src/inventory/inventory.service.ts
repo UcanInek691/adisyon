@@ -1,6 +1,7 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { newId, StockMovementType } from '@ado/shared';
+import { newId, StockMovementType, type DomainEvent } from '@ado/shared';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import type {
@@ -39,7 +40,7 @@ export class InventoryService {
     });
     if (!supplier) throw new NotFoundException('Tedarikçi bulunamadı.');
 
-    const data: any = {
+    const data: Prisma.SupplierUpdateInput = {
       version: { increment: 1 },
     };
     if (dto.name !== undefined) data.name = dto.name;
@@ -86,8 +87,31 @@ export class InventoryService {
     if (!supplier) throw new NotFoundException('Tedarikçi bulunamadı.');
 
     const purchaseId = newId();
+    const expectedTotal = dto.items.reduce(
+      (sum, item) => sum + Math.round((item.quantity * item.unitCost) / 1000),
+      0,
+    );
+    if (dto.total !== expectedTotal) {
+      throw new BadRequestException({
+        code: 'PURCHASE_TOTAL_MISMATCH',
+        message: `Alim toplami kalem toplamina esit olmali (${expectedTotal}).`,
+      });
+    }
 
     return this.prisma.$transaction(async (tx) => {
+      const productIds = [...new Set(dto.items.map((item) => item.productId))];
+      const productCount = await tx.product.count({
+        where: {
+          id: { in: productIds },
+          branchId: user.branchId,
+          deletedAt: null,
+          isActive: true,
+        },
+      });
+      if (productCount !== productIds.length) {
+        throw new NotFoundException('Urunlerden biri bulunamadi veya aktif degil.');
+      }
+
       // 1. Alım (Purchase) kaydı oluştur
       const purchase = await tx.purchase.create({
         data: {
@@ -105,7 +129,7 @@ export class InventoryService {
       // 2. Kalemleri ve Stok hareketlerini ekle
       for (const item of dto.items) {
         const itemId = newId();
-        const lineTotal = (item.quantity / 1000) * item.unitCost;
+        const lineTotal = Math.round((item.quantity * item.unitCost) / 1000);
 
         await tx.purchaseItem.create({
           data: {
@@ -114,7 +138,7 @@ export class InventoryService {
             productId: item.productId,
             quantity: item.quantity,
             unitCost: item.unitCost,
-            lineTotal: Math.round(lineTotal),
+            lineTotal,
             deviceId: user.deviceId ?? null,
           },
         });
@@ -185,19 +209,33 @@ export class InventoryService {
   // Boylece pending/taslak/offline kalemler (silinebilir, degistirilebilir) stok tutmaz
   // -> removeItem/updateItem stok sizintisi olusturmaz. Void -> iade (asagida).
   @OnEvent('order.item.sent', { async: true })
-  async handleOrderItemSent(event: any) {
+  async handleOrderItemSent(
+    event: DomainEvent<
+      'order.item.sent',
+      { items: Array<{ productId: string; quantity: number; orderItemId: string }> }
+    >,
+  ) {
     const items: Array<{ productId: string; quantity: number; orderItemId: string }> =
       event.payload?.items ?? [];
     for (const it of items) {
-      const product = await this.prisma.product.findUnique({ where: { id: it.productId } });
+      const product = await this.prisma.product.findFirst({
+        where: { id: it.productId, branchId: event.branchId, deletedAt: null },
+      });
       if (!product || !product.trackStock) continue;
 
       this.logger.log(
         `Received order.item.sent. Deducting stock for product: ${it.productId}, quantity: ${it.quantity}`,
       );
 
-      await this.prisma.stockMovement.create({
-        data: {
+      await this.prisma.stockMovement.upsert({
+        where: {
+          relatedOrderItemId_type: {
+            relatedOrderItemId: it.orderItemId,
+            type: StockMovementType.Sale,
+          },
+        },
+        update: {},
+        create: {
           id: newId(),
           branchId: event.branchId,
           productId: it.productId,
@@ -213,11 +251,16 @@ export class InventoryService {
   }
 
   @OnEvent('order.item.voided', { async: true })
-  async handleOrderItemVoided(event: any) {
+  async handleOrderItemVoided(
+    event: DomainEvent<
+      'order.item.voided',
+      { productId: string; quantity: number; orderItemId: string }
+    >,
+  ) {
     const { productId, quantity, orderItemId } = event.payload;
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, branchId: event.branchId, deletedAt: null },
     });
 
     if (!product || !product.trackStock) return;
@@ -226,8 +269,15 @@ export class InventoryService {
       `Received order.item.voided. Refunding stock for product: ${productId}, quantity: ${quantity}`,
     );
 
-    await this.prisma.stockMovement.create({
-      data: {
+    await this.prisma.stockMovement.upsert({
+      where: {
+        relatedOrderItemId_type: {
+          relatedOrderItemId: orderItemId,
+          type: StockMovementType.Return,
+        },
+      },
+      update: {},
+      create: {
         id: newId(),
         branchId: event.branchId,
         productId,

@@ -1,9 +1,10 @@
 // Masaustu paketi icin kendi-yeten bundle hazirlar (electron-builder oncesi).
 // Kullanim: node build-bundle.mjs  (cwd: apps/desktop)
 import { execSync } from 'node:child_process';
-import { cpSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 const root = resolve(import.meta.dirname, '..', '..');
 const bundle = resolve(import.meta.dirname, 'bundle');
@@ -13,8 +14,8 @@ const run = (cmd, env = {}) =>
 rmSync(bundle, { recursive: true, force: true });
 
 // 1) Derle
-run('pnpm --filter @ado/frontend build');
-run('pnpm --filter @ado/backend build');
+run('npm --prefix apps/frontend run build');
+run('npm --prefix apps/backend run build');
 
 // 2) Kendi-yeten backend: hoisted linker gercek (junction'siz) node_modules uretir,
 //    argon2 win32 native paketi de dahil olur.
@@ -34,6 +35,11 @@ const prismaClient = join(
 cpSync(prismaClient, join(bundle, 'backend', 'node_modules', '.prisma', 'client'), {
   recursive: true,
 });
+cpSync(
+  join(root, 'prisma', 'schema', 'migrations'),
+  join(bundle, 'backend', 'prisma', 'migrations'),
+  { recursive: true },
+);
 
 // 4) Frontend dist — backend bunu dist/main.js'e gore ../../frontend/dist yolundan sunar.
 cpSync(join(root, 'apps', 'frontend', 'dist'), join(bundle, 'frontend', 'dist'), {
@@ -43,9 +49,28 @@ cpSync(join(root, 'apps', 'frontend', 'dist'), join(bundle, 'frontend', 'dist'),
 // 5) Sablon DB: bos sema (migrate deploy) + KULLANICISIZ seed (rol/izin/sube).
 // Sifre env'leri bilerek bosaltilir -> ilk acilista uygulama kurulum sihirbazini gosterir.
 const DATABASE_URL = 'file:' + join(bundle, 'template.db').replaceAll('\\', '/');
-run('pnpm exec prisma migrate deploy --schema prisma/schema', { DATABASE_URL });
+const templateDb = new DatabaseSync(join(bundle, 'template.db'));
+templateDb.exec(
+  'CREATE TABLE "_ado_migrations" ("name" TEXT PRIMARY KEY, "applied_at" TEXT NOT NULL)',
+);
+for (const name of readdirSync(join(root, 'prisma', 'schema', 'migrations')).sort()) {
+  const sqlPath = join(root, 'prisma', 'schema', 'migrations', name, 'migration.sql');
+  if (!existsSync(sqlPath)) continue;
+  templateDb.exec('BEGIN IMMEDIATE');
+  try {
+    templateDb.exec(readFileSync(sqlPath, 'utf8'));
+    templateDb
+      .prepare('INSERT INTO "_ado_migrations" ("name", "applied_at") VALUES (?, ?)')
+      .run(name, new Date().toISOString());
+    templateDb.exec('COMMIT');
+  } catch (error) {
+    templateDb.exec('ROLLBACK');
+    throw error;
+  }
+}
+templateDb.close();
 // Bos string: dotenv mevcut degiskeni ezmez, env semasi ''=yok sayar -> kullanici olusmaz.
-run('pnpm --filter @ado/backend seed', {
+run('npm --prefix apps/backend run seed', {
   DATABASE_URL,
   SEED_OWNER_PASSWORD: '',
   SEED_WAITER_PIN: '',

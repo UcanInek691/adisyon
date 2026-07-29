@@ -26,7 +26,7 @@ export class FeatureFlagService implements OnModuleInit {
       }
       this.isLoaded = true;
       this.logger.log(`Loaded feature flags: ${JSON.stringify(this.cachedFlags)}`);
-    } catch (err: any) {
+    } catch (err) {
       this.logger.error('Failed to load feature flags from license info', err);
       this.cachedFlags = {};
     }

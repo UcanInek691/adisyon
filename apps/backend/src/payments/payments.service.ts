@@ -11,6 +11,9 @@ import {
   DomainEventName,
   OrderStatus,
   PaymentDirection,
+  PaymentMethod,
+  CashTxnType,
+  DebtTxnType,
   TableStatus,
 } from '@ado/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -43,11 +46,19 @@ export class PaymentsService {
   }
 
   async recordPayment(user: AuthUser, orderId: string, dto: RecordPaymentDto) {
-    // Idempotency (offline replay): ayni anahtar -> mevcut durumu don.
     const dup = await this.prisma.payment.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
+      include: { order: { select: { branchId: true } } },
     });
-    if (dup) return this.orderWithPayments(dup.orderId);
+    if (dup) {
+      if (dup.orderId !== orderId || dup.order.branchId !== user.branchId) {
+        throw new ConflictException({
+          code: 'IDEMPOTENCY_KEY_REUSED',
+          message: 'Bu islem anahtari baska bir odemede kullanilmis.',
+        });
+      }
+      return this.orderWithPayments(user.branchId, orderId);
+    }
 
     const paymentId = newId();
     let payment;
@@ -63,11 +74,14 @@ export class PaymentsService {
           throw new ConflictException({ code: 'ORDER_NOT_OPEN', message: 'Adisyon acik degil.' });
         }
 
-        const agg = await tx.payment.aggregate({
-          where: { orderId, direction: PaymentDirection.Charge, deletedAt: null },
+        const totals = await tx.payment.groupBy({
+          by: ['direction'],
+          where: { orderId, deletedAt: null },
           _sum: { amount: true },
         });
-        const alreadyPaid = agg._sum.amount ?? 0;
+        const totalOf = (direction: string) =>
+          totals.find((row) => row.direction === direction)?._sum.amount ?? 0;
+        const alreadyPaid = totalOf(PaymentDirection.Charge) - totalOf(PaymentDirection.Refund);
         const remaining = order.grandTotal - alreadyPaid;
         if (remaining <= 0) {
           throw new ConflictException({
@@ -92,6 +106,39 @@ export class PaymentsService {
           ...(dto.received !== undefined ? { received: dto.received } : {}),
         });
 
+        const debtAccount =
+          dto.method === PaymentMethod.Debt
+            ? await tx.debtAccount.findFirst({
+                where: {
+                  customerId: dto.customerId!,
+                  deletedAt: null,
+                  customer: {
+                    branchId: user.branchId,
+                    deletedAt: null,
+                    isActive: true,
+                  },
+                },
+              })
+            : null;
+        if (dto.method === PaymentMethod.Debt && !debtAccount) {
+          throw new NotFoundException({
+            code: 'CUSTOMER_NOT_FOUND',
+            message: 'Musteri veya veresiye hesabi bulunamadi.',
+          });
+        }
+        const cashSession =
+          dto.method === PaymentMethod.Cash
+            ? await tx.cashSession.findFirst({
+                where: { branchId: user.branchId, status: 'open', deletedAt: null },
+              })
+            : null;
+        if (dto.method === PaymentMethod.Cash && !cashSession) {
+          throw new ConflictException({
+            code: 'CASH_SESSION_REQUIRED',
+            message: 'Nakit odeme icin once kasa oturumu acmalisiniz.',
+          });
+        }
+
         const p = await tx.payment.create({
           data: {
             id: paymentId,
@@ -102,6 +149,7 @@ export class PaymentsService {
             received,
             change,
             reference: dto.reference ?? null,
+            customerId: dto.customerId ?? null,
             takenBy: user.userId,
             paidAt: new Date(),
             idempotencyKey: dto.idempotencyKey,
@@ -109,18 +157,68 @@ export class PaymentsService {
           },
         });
 
-        if (fullyPaid) {
-          await tx.order.update({
-            where: { id: orderId },
+        const orderUpdate = await tx.order.updateMany({
+          where: { id: orderId, version: order.version, status: OrderStatus.Open },
+          data: fullyPaid
+            ? {
+                isPaid: true,
+                status: OrderStatus.Completed,
+                closedBy: user.userId,
+                closedAt: new Date(),
+                completedAt: order.completedAt ?? new Date(),
+                version: { increment: 1 },
+                syncState: 'pending',
+              }
+            : {
+                version: { increment: 1 },
+                syncState: 'pending',
+              },
+        });
+        if (orderUpdate.count !== 1) {
+          throw new ConflictException({
+            code: 'ORDER_CHANGED',
+            message: 'Adisyon es zamanli olarak degisti. Lutfen tekrar deneyin.',
+          });
+        }
+
+        if (cashSession) {
+          await tx.cashTransaction.create({
             data: {
-              isPaid: true,
-              status: OrderStatus.Completed,
-              closedBy: user.userId,
-              closedAt: new Date(),
-              version: { increment: 1 },
-              syncState: 'pending',
+              id: newId(),
+              cashSessionId: cashSession.id,
+              type: CashTxnType.Sale,
+              amount: dto.amount,
+              method: dto.method,
+              relatedPaymentId: paymentId,
+              createdBy: user.userId,
+              note: `Siparis satisi (Odeme Ref: ${paymentId})`,
+              ...this.provenance(user),
             },
           });
+        }
+
+        if (debtAccount) {
+          await tx.debtTransaction.create({
+            data: {
+              id: newId(),
+              debtAccountId: debtAccount.id,
+              type: DebtTxnType.DebtAdd,
+              amount: dto.amount,
+              relatedOrderId: orderId,
+              relatedPaymentId: paymentId,
+              createdBy: user.userId,
+              note: `Adisyon borc kaydi (Ref No: ${orderId})`,
+              occurredAt: new Date(),
+              ...this.provenance(user),
+            },
+          });
+          await tx.debtAccount.update({
+            where: { id: debtAccount.id },
+            data: { balance: { increment: dto.amount }, version: { increment: 1 } },
+          });
+        }
+
+        if (fullyPaid) {
           // Baska acik adisyon yoksa masayi bosalt (split adisyon guvenligi).
           if (order.tableId) {
             const stillOpen = await tx.order.count({
@@ -143,12 +241,36 @@ export class PaymentsService {
             }
           }
         }
+        await this.events.publishDurable(
+          tx,
+          createDomainEvent(
+            DomainEventName.OrderPaid,
+            {
+              orderId,
+              paymentId,
+              amount: dto.amount,
+              method: dto.method,
+              ...(dto.customerId ? { customerId: dto.customerId } : {}),
+            },
+            {
+              branchId: user.branchId,
+              actorId: user.userId,
+              ...(user.deviceId ? { deviceId: user.deviceId } : {}),
+            },
+          ),
+        );
         return p;
       });
     } catch (e) {
       // Yaris: ayni idempotencyKey araya girdi -> idempotent don.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        return this.orderWithPayments(orderId);
+        const existing = await this.prisma.payment.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          include: { order: { select: { branchId: true } } },
+        });
+        if (existing?.orderId === orderId && existing.order.branchId === user.branchId) {
+          return this.orderWithPayments(user.branchId, orderId);
+        }
       }
       throw e;
     }
@@ -163,34 +285,23 @@ export class PaymentsService {
       ...this.provenance(user),
     });
 
-    // order.paid: her odemede yayinlanir -> kasa/veresiye/yazdirma dinleyicileri.
-    await this.events.publish(
-      createDomainEvent(
-        DomainEventName.OrderPaid,
-        {
-          orderId,
-          paymentId,
-          amount: dto.amount,
-          method: dto.method,
-          ...(dto.customerId ? { customerId: dto.customerId } : {}),
-        },
-        {
-          branchId: user.branchId,
-          actorId: user.userId,
-          ...(user.deviceId ? { deviceId: user.deviceId } : {}),
-        },
-      ),
-    );
-
-    return this.orderWithPayments(orderId);
+    return this.orderWithPayments(user.branchId, orderId);
   }
 
   async reversePayment(user: AuthUser, orderId: string, paymentId: string, dto: ReversePaymentDto) {
-    // Idempotency: ayni anahtar -> mevcut durumu don.
     const dup = await this.prisma.payment.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
+      include: { order: { select: { branchId: true } } },
     });
-    if (dup) return this.orderWithPayments(dup.orderId);
+    if (dup) {
+      if (dup.orderId !== orderId || dup.order.branchId !== user.branchId) {
+        throw new ConflictException({
+          code: 'IDEMPOTENCY_KEY_REUSED',
+          message: 'Bu islem anahtari baska bir odemede kullanilmis.',
+        });
+      }
+      return this.orderWithPayments(user.branchId, orderId);
+    }
 
     const refundId = newId();
     let refund;
@@ -219,10 +330,45 @@ export class PaymentsService {
             message: 'Bu odeme zaten iade edilmis.',
           });
         }
-        if (original.method === 'debt' && !dto.customerId) {
+        if (dto.customerId && original.customerId && dto.customerId !== original.customerId) {
+          throw new ConflictException({
+            code: 'PAYMENT_CUSTOMER_MISMATCH',
+            message: 'Iade musterisi odemenin musterisiyle eslesmiyor.',
+          });
+        }
+        const customerId = original.customerId ?? dto.customerId;
+        if (original.method === PaymentMethod.Debt && !customerId) {
           throw new BadRequestException({
             code: 'CUSTOMER_REQUIRED',
-            message: 'Veresiye odemenin iadesi icin customerId zorunlu.',
+            message: 'Eski veresiye odemesinin iadesi icin customerId zorunlu.',
+          });
+        }
+        const debtAccount =
+          original.method === PaymentMethod.Debt
+            ? await tx.debtAccount.findFirst({
+                where: {
+                  customerId: customerId!,
+                  deletedAt: null,
+                  customer: { branchId: user.branchId, deletedAt: null },
+                },
+              })
+            : null;
+        if (original.method === PaymentMethod.Debt && !debtAccount) {
+          throw new NotFoundException({
+            code: 'CUSTOMER_NOT_FOUND',
+            message: 'Musteri veya veresiye hesabi bulunamadi.',
+          });
+        }
+        const cashSession =
+          original.method === PaymentMethod.Cash
+            ? await tx.cashSession.findFirst({
+                where: { branchId: user.branchId, status: 'open', deletedAt: null },
+              })
+            : null;
+        if (original.method === PaymentMethod.Cash && !cashSession) {
+          throw new ConflictException({
+            code: 'CASH_SESSION_REQUIRED',
+            message: 'Nakit iade icin once kasa oturumu acmalisiniz.',
           });
         }
 
@@ -237,6 +383,7 @@ export class PaymentsService {
             received: 0,
             change: 0,
             reference: dto.reason ?? null,
+            customerId: customerId ?? null,
             takenBy: user.userId,
             paidAt: new Date(),
             reversesPaymentId: original.id,
@@ -244,6 +391,43 @@ export class PaymentsService {
             ...this.provenance(user),
           },
         });
+
+        if (cashSession) {
+          await tx.cashTransaction.create({
+            data: {
+              id: newId(),
+              cashSessionId: cashSession.id,
+              type: CashTxnType.Refund,
+              amount: -original.amount,
+              method: PaymentMethod.Cash,
+              relatedPaymentId: refundId,
+              createdBy: user.userId,
+              note: `Iade (Odeme Ref: ${refundId})`,
+              ...this.provenance(user),
+            },
+          });
+        }
+
+        if (debtAccount) {
+          await tx.debtTransaction.create({
+            data: {
+              id: newId(),
+              debtAccountId: debtAccount.id,
+              type: DebtTxnType.Payment,
+              amount: -original.amount,
+              relatedOrderId: orderId,
+              relatedPaymentId: refundId,
+              createdBy: user.userId,
+              note: `Adisyon iadesi - borc geri alma (Ref No: ${orderId})`,
+              occurredAt: new Date(),
+              ...this.provenance(user),
+            },
+          });
+          await tx.debtAccount.update({
+            where: { id: debtAccount.id },
+            data: { balance: { decrement: original.amount }, version: { increment: 1 } },
+          });
+        }
 
         // Kalan odeme = charge toplami - refund toplami. Adisyon kapaliyken
         // tam odemenin altina duserse yeniden acilir (duzeltme mumkun olsun).
@@ -258,8 +442,8 @@ export class PaymentsService {
         const netPaid = (charges._sum.amount ?? 0) - (refunds._sum.amount ?? 0);
 
         if (order.isPaid && netPaid < order.grandTotal) {
-          await tx.order.update({
-            where: { id: orderId },
+          const reopened = await tx.order.updateMany({
+            where: { id: orderId, version: order.version },
             data: {
               isPaid: false,
               status: OrderStatus.Open,
@@ -269,6 +453,12 @@ export class PaymentsService {
               syncState: 'pending',
             },
           });
+          if (reopened.count !== 1) {
+            throw new ConflictException({
+              code: 'ORDER_CHANGED',
+              message: 'Adisyon es zamanli olarak degisti. Lutfen tekrar deneyin.',
+            });
+          }
           if (order.tableId) {
             await tx.table.update({
               where: { id: order.tableId },
@@ -280,11 +470,45 @@ export class PaymentsService {
             });
           }
         }
+        await this.events.publishDurable(
+          tx,
+          createDomainEvent(
+            DomainEventName.OrderRefunded,
+            {
+              orderId,
+              paymentId: refundId,
+              originalPaymentId: paymentId,
+              amount: refundPayment.amount,
+              method: refundPayment.method,
+              ...(refundPayment.customerId ? { customerId: refundPayment.customerId } : {}),
+            },
+            {
+              branchId: user.branchId,
+              actorId: user.userId,
+              ...(user.deviceId ? { deviceId: user.deviceId } : {}),
+            },
+          ),
+        );
         return refundPayment;
       });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        return this.orderWithPayments(orderId);
+        const existing = await this.prisma.payment.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          include: { order: { select: { branchId: true } } },
+        });
+        if (existing?.orderId === orderId && existing.order.branchId === user.branchId) {
+          return this.orderWithPayments(user.branchId, orderId);
+        }
+        const reversal = await this.prisma.payment.findUnique({
+          where: { reversesPaymentId: paymentId },
+        });
+        if (reversal) {
+          throw new ConflictException({
+            code: 'PAYMENT_ALREADY_REVERSED',
+            message: 'Bu odeme zaten iade edilmis.',
+          });
+        }
       }
       throw e;
     }
@@ -300,27 +524,7 @@ export class PaymentsService {
       ...this.provenance(user),
     });
 
-    // order.refunded -> kasa (nakit cikisi) / veresiye (borc geri alma) dinleyicileri.
-    await this.events.publish(
-      createDomainEvent(
-        DomainEventName.OrderRefunded,
-        {
-          orderId,
-          paymentId: refundId,
-          originalPaymentId: paymentId,
-          amount: refund.amount,
-          method: refund.method,
-          ...(dto.customerId ? { customerId: dto.customerId } : {}),
-        },
-        {
-          branchId: user.branchId,
-          actorId: user.userId,
-          ...(user.deviceId ? { deviceId: user.deviceId } : {}),
-        },
-      ),
-    );
-
-    return this.orderWithPayments(orderId);
+    return this.orderWithPayments(user.branchId, orderId);
   }
 
   listPayments(user: AuthUser, orderId: string) {
@@ -330,9 +534,9 @@ export class PaymentsService {
     });
   }
 
-  private async orderWithPayments(orderId: string) {
-    return this.prisma.order.findUnique({
-      where: { id: orderId },
+  private async orderWithPayments(branchId: string, orderId: string) {
+    return this.prisma.order.findFirst({
+      where: { id: orderId, branchId, deletedAt: null },
       include: {
         items: { where: { deletedAt: null }, orderBy: { createdAt: 'asc' } },
         payments: { where: { deletedAt: null }, orderBy: { paidAt: 'asc' } },

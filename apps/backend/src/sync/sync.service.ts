@@ -57,6 +57,14 @@ export class SyncService {
         where: { clientOpId: m.clientOpId },
       });
       if (prior) {
+        if (prior.branchId !== user.branchId) {
+          results.push({
+            clientOpId: m.clientOpId,
+            status: OfflineMutationResult.Rejected,
+            reason: 'IDEMPOTENCY_KEY_REUSED',
+          });
+          continue;
+        }
         // Deftere islenmis: yeniden islenmez, ilk sonuc doner (replay guvenli).
         results.push({
           clientOpId: m.clientOpId,
@@ -72,6 +80,7 @@ export class SyncService {
       await this.prisma.processedClientOp.create({
         data: {
           id: newId(),
+          branchId: user.branchId,
           clientOpId: m.clientOpId,
           deviceId: dto.deviceId,
           mutationType: m.type,
@@ -221,7 +230,7 @@ export class SyncService {
       m.payload = { ...m.payload, orderId: order!.id, orderClientOpId: undefined };
     } else {
       // yeniden_ac: kapali/iptal adisyonu tekrar acar, mutasyon uzerine uygulanir.
-      const orderId = await this.resolveOrderId(m.payload);
+      const orderId = await this.resolveOrderId(user, m.payload);
       const order = await this.prisma.order.findFirst({
         where: { id: orderId, branchId: user.branchId, deletedAt: null },
       });
@@ -229,6 +238,29 @@ export class SyncService {
         throw new NotFoundException({ code: 'ORDER_NOT_FOUND', message: 'Adisyon bulunamadi.' });
       }
       if (order.status !== OrderStatus.Open) {
+        if (order.status !== OrderStatus.Held || order.isPaid) {
+          throw new ConflictException({
+            code: 'ORDER_CANNOT_REOPEN',
+            message: 'Odenmis veya iptal edilmis adisyon yeniden acilamaz; yeni adisyon kullanin.',
+          });
+        }
+        if (order.tableId) {
+          const occupied = await this.prisma.order.count({
+            where: {
+              branchId: user.branchId,
+              tableId: order.tableId,
+              id: { not: order.id },
+              status: { in: [OrderStatus.Open, OrderStatus.Held] },
+              deletedAt: null,
+            },
+          });
+          if (occupied) {
+            throw new ConflictException({
+              code: 'TABLE_HAS_OPEN_ORDER',
+              message: 'Masada baska bir aktif adisyon var.',
+            });
+          }
+        }
         await this.prisma.$transaction(async (tx) => {
           await tx.order.update({
             where: { id: orderId },
@@ -340,7 +372,7 @@ export class SyncService {
         reason: 'PRODUCT_INACTIVE',
       };
     }
-    const orderId = await this.resolveOrderId(p);
+    const orderId = await this.resolveOrderId(user, p);
     await this.orders.addItem(user, orderId, {
       productId: p.productId,
       quantity: p.quantity,
@@ -357,7 +389,7 @@ export class SyncService {
 
   private async applyUpdateLineQty(user: AuthUser, m: SyncMutation): Promise<MutationResult> {
     const p = updateLineQtyPayload.parse(m.payload);
-    const item = await this.resolveItem(p);
+    const item = await this.resolveItem(user, p);
     // Gonderilmis satirda artis istemci tarafinda yeni ADD_LINE'a cevrilir
     // (append delta); buraya yalniz pending satir duzenlemesi gelir.
     await this.orders.updateItem(user, item.orderId, item.id, { quantity: p.quantity });
@@ -366,14 +398,17 @@ export class SyncService {
 
   private async applyAddNote(user: AuthUser, m: SyncMutation): Promise<MutationResult> {
     const p = addNotePayload.parse(m.payload);
-    const item = await this.resolveItem(p);
-    await this.prisma.orderItemNote.create({
-      data: {
+    const item = await this.resolveItem(user, p);
+    await this.prisma.orderItemNote.upsert({
+      where: { clientOpId: m.clientOpId },
+      update: {},
+      create: {
         id: newId(),
         orderItemId: item.id,
         note: p.note,
         type: 'waiter',
         createdBy: user.userId,
+        clientOpId: m.clientOpId,
         ...(user.deviceId ? { deviceId: user.deviceId } : {}),
       },
     });
@@ -382,7 +417,7 @@ export class SyncService {
 
   private async applySubmitOrder(user: AuthUser, m: SyncMutation): Promise<MutationResult> {
     const p = submitOrderPayload.parse(m.payload);
-    const orderId = await this.resolveOrderId(p);
+    const orderId = await this.resolveOrderId(user, p);
     try {
       await this.orders.sendToKitchen(user, orderId);
     } catch (err) {
@@ -397,27 +432,54 @@ export class SyncService {
   // ===========================================================================
 
   /** Adisyon referansini cozer: sunucu id > clientOpId'li order > defter kaydi (merge edilmis OPEN_TABLE). */
-  private async resolveOrderId(ref: { orderId?: unknown; orderClientOpId?: unknown }) {
-    if (typeof ref.orderId === 'string' && ref.orderId) return ref.orderId;
+  private async resolveOrderId(
+    user: AuthUser,
+    ref: { orderId?: unknown; orderClientOpId?: unknown },
+  ) {
+    if (typeof ref.orderId === 'string' && ref.orderId) {
+      const order = await this.prisma.order.findFirst({
+        where: { id: ref.orderId, branchId: user.branchId, deletedAt: null },
+        select: { id: true },
+      });
+      if (order) return order.id;
+      throw new NotFoundException({ code: 'ORDER_NOT_FOUND', message: 'Adisyon bulunamadi.' });
+    }
     const opId = typeof ref.orderClientOpId === 'string' ? ref.orderClientOpId : '';
     if (opId) {
-      const byOp = await this.prisma.order.findUnique({ where: { clientOpId: opId } });
+      const byOp = await this.prisma.order.findFirst({
+        where: { clientOpId: opId, branchId: user.branchId, deletedAt: null },
+      });
       if (byOp) return byOp.id;
       const ledger = await this.prisma.processedClientOp.findUnique({
         where: { clientOpId: opId },
       });
-      if (ledger?.resultRef) return ledger.resultRef;
+      if (ledger?.branchId === user.branchId && ledger.resultRef) return ledger.resultRef;
     }
     throw new NotFoundException({ code: 'ORDER_NOT_FOUND', message: 'Adisyon bulunamadi.' });
   }
 
-  private async resolveItem(ref: {
-    itemId?: string | undefined;
-    itemClientOpId?: string | undefined;
-  }) {
+  private async resolveItem(
+    user: AuthUser,
+    ref: {
+      itemId?: string | undefined;
+      itemClientOpId?: string | undefined;
+    },
+  ) {
     const item = ref.itemId
-      ? await this.prisma.orderItem.findFirst({ where: { id: ref.itemId, deletedAt: null } })
-      : await this.prisma.orderItem.findUnique({ where: { clientOpId: ref.itemClientOpId! } });
+      ? await this.prisma.orderItem.findFirst({
+          where: {
+            id: ref.itemId,
+            deletedAt: null,
+            order: { branchId: user.branchId, deletedAt: null },
+          },
+        })
+      : await this.prisma.orderItem.findFirst({
+          where: {
+            clientOpId: ref.itemClientOpId!,
+            deletedAt: null,
+            order: { branchId: user.branchId, deletedAt: null },
+          },
+        });
     if (!item) {
       throw new NotFoundException({ code: 'ORDER_ITEM_NOT_FOUND', message: 'Kalem bulunamadi.' });
     }
@@ -446,6 +508,9 @@ export class SyncService {
       };
     }
     const code = this.errCode(err);
+    if (code === 'CASH_SESSION_REQUIRED') {
+      return this.createReview(user, deviceId, m, OfflineReviewReason.CashClosed);
+    }
     if (code === 'ORDER_NOT_OPEN') {
       return this.createReview(user, deviceId, m, OfflineReviewReason.TableClosed);
     }

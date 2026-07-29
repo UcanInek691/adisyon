@@ -6,9 +6,12 @@ import { z } from 'zod';
  */
 export const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
+  ADO_DATA_DIR: z.string().optional(),
+  BACKUP_ENCRYPTION_KEY: z.string().min(16).optional(),
 
   API_PORT: z.coerce.number().int().positive().default(3001),
   API_HOST: z.string().default('0.0.0.0'),
+  CORS_ORIGINS: z.string().default(''),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
   // Owner access kisa (ana makine hep bagli); Waiter access uzun (offline vardiya).
@@ -32,7 +35,13 @@ export const envSchema = z.object({
   SEED_OWNER_DISPLAY_NAME: z.string().default('Yonetici'),
   SEED_WAITER_USERNAME: z.string().default('garson'),
   SEED_WAITER_DISPLAY_NAME: z.string().default('Garson'),
-  SEED_WAITER_PIN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(3).optional()),
+  SEED_WAITER_PIN: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z
+      .string()
+      .regex(/^\d{4,6}$/)
+      .optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -25,7 +25,7 @@ export class LicenseGuard implements CanActivate {
 
     if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
     const path = req.path ?? req.url ?? '';
-    if (ALWAYS_ALLOWED.some((p) => path.includes(p))) return true;
+    if (ALWAYS_ALLOWED.some((p) => path === p || path.startsWith(`${p}/`))) return true;
 
     // Kullanici yoksa (public uc) lisans denetimi yapilmaz; JwtAuthGuard zaten
     // karar vermistir.

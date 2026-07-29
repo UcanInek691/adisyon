@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import {
   newId,
   createDomainEvent,
@@ -68,8 +69,18 @@ export class OrdersService {
       const existing = await this.prisma.order.findUnique({
         where: { clientOpId: dto.clientOpId },
       });
-      if (existing) return this.orderWithItems(existing.id);
+      if (existing) {
+        if (existing.branchId !== user.branchId) {
+          throw new ConflictException({
+            code: 'IDEMPOTENCY_KEY_REUSED',
+            message: 'Bu islem anahtari baska bir subede kullanilmis.',
+          });
+        }
+        return this.orderWithItems(existing.id);
+      }
     }
+
+    await this.requireOpenCashSession(user.branchId);
 
     if (dto.tableId) {
       await this.tableOrThrow(user.branchId, dto.tableId);
@@ -77,7 +88,7 @@ export class OrdersService {
         where: {
           branchId: user.branchId,
           tableId: dto.tableId,
-          status: OrderStatus.Open,
+          status: { in: [OrderStatus.Open, OrderStatus.Held] },
           deletedAt: null,
         },
       });
@@ -91,6 +102,7 @@ export class OrdersService {
 
     const id = newId();
     const created = await this.prisma.$transaction(async (tx) => {
+      await this.requireOpenCashSession(user.branchId, tx);
       const orderNo = await this.generateOrderNo(tx, user.branchId);
       const order = await tx.order.create({
         data: {
@@ -201,8 +213,17 @@ export class OrdersService {
     if (dto.clientOpId) {
       const existing = await this.prisma.orderItem.findUnique({
         where: { clientOpId: dto.clientOpId },
+        include: { order: { select: { branchId: true } } },
       });
-      if (existing) return this.orderWithItems(orderId); // idempotent replay
+      if (existing) {
+        if (existing.orderId !== orderId || existing.order.branchId !== user.branchId) {
+          throw new ConflictException({
+            code: 'IDEMPOTENCY_KEY_REUSED',
+            message: 'Bu islem anahtari baska bir kalemde kullanilmis.',
+          });
+        }
+        return this.orderWithItems(orderId);
+      }
     }
 
     const product = await this.productForOrder(user.branchId, dto.productId);
@@ -210,37 +231,38 @@ export class OrdersService {
     const lineTotal = gross; // lineDiscount 0 (satir indirimi PR2)
 
     const itemId = newId();
-    const item = await this.prisma.orderItem.create({
-      data: {
-        id: itemId,
-        orderId,
-        productId: product.id,
-        productNameSnapshot: product.name,
-        unitPrice: product.salePrice,
-        quantity: dto.quantity,
-        taxRatePermille: product.tax.ratePermille,
-        lineDiscount: 0,
-        lineTotal,
-        status: OrderItemStatus.Pending,
-        addedBy: user.userId,
-        ...(dto.clientOpId ? { clientOpId: dto.clientOpId } : {}),
-        ...this.provenance(user),
-      },
-    });
-    if (dto.note) {
-      await this.prisma.orderItemNote.create({
+    const { item, updated } = await this.prisma.$transaction(async (tx) => {
+      const item = await tx.orderItem.create({
         data: {
-          id: newId(),
-          orderItemId: itemId,
-          note: dto.note,
-          type: 'waiter',
-          createdBy: user.userId,
+          id: itemId,
+          orderId,
+          productId: product.id,
+          productNameSnapshot: product.name,
+          unitPrice: product.salePrice,
+          quantity: dto.quantity,
+          taxRatePermille: product.tax.ratePermille,
+          lineDiscount: 0,
+          lineTotal,
+          status: OrderItemStatus.Pending,
+          addedBy: user.userId,
+          ...(dto.clientOpId ? { clientOpId: dto.clientOpId } : {}),
           ...this.provenance(user),
         },
       });
-    }
-
-    const updated = await this.recompute(orderId);
+      if (dto.note) {
+        await tx.orderItemNote.create({
+          data: {
+            id: newId(),
+            orderItemId: itemId,
+            note: dto.note,
+            type: 'waiter',
+            createdBy: user.userId,
+            ...this.provenance(user),
+          },
+        });
+      }
+      return { item, updated: await this.recompute(orderId, tx) };
+    });
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.item.add',
@@ -273,16 +295,18 @@ export class OrdersService {
       order.grandTotal,
       order.grandTotal - (item.lineTotal - lineTotal),
     );
-    await this.prisma.orderItem.update({
-      where: { id: itemId },
-      data: {
-        quantity: dto.quantity,
-        lineTotal,
-        version: { increment: 1 },
-        syncState: 'pending',
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.update({
+        where: { id: itemId },
+        data: {
+          quantity: dto.quantity,
+          lineTotal,
+          version: { increment: 1 },
+          syncState: 'pending',
+        },
+      });
+      return this.recompute(orderId, tx);
     });
-    const updated = await this.recompute(orderId);
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.item.update',
@@ -302,11 +326,13 @@ export class OrdersService {
     this.assertItemEditable(item);
 
     await this.assertNotBelowPaid(orderId, order.grandTotal, order.grandTotal - item.lineTotal);
-    await this.prisma.orderItem.update({
-      where: { id: itemId },
-      data: { deletedAt: new Date(), version: { increment: 1 }, syncState: 'pending' },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.update({
+        where: { id: itemId },
+        data: { deletedAt: new Date(), version: { increment: 1 }, syncState: 'pending' },
+      });
+      return this.recompute(orderId, tx);
     });
-    const updated = await this.recompute(orderId);
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.item.remove',
@@ -331,17 +357,38 @@ export class OrdersService {
       });
     }
     await this.assertNotBelowPaid(orderId, order.grandTotal, order.grandTotal - item.lineTotal);
-    await this.prisma.orderItem.update({
-      where: { id: itemId },
-      data: {
-        status: OrderItemStatus.Cancelled,
-        voidedBy: user.userId,
-        voidReason: dto.reason ?? null,
-        version: { increment: 1 },
-        syncState: 'pending',
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.update({
+        where: { id: itemId },
+        data: {
+          status: OrderItemStatus.Cancelled,
+          voidedBy: user.userId,
+          voidReason: dto.reason ?? null,
+          version: { increment: 1 },
+          syncState: 'pending',
+        },
+      });
+      const updated = await this.recompute(orderId, tx);
+      await this.events.publishDurable(
+        tx,
+        createDomainEvent(
+          DomainEventName.OrderItemVoided,
+          {
+            orderId,
+            orderItemId: itemId,
+            productId: item.productId,
+            quantity: item.quantity,
+            lineTotal: item.lineTotal,
+          },
+          {
+            branchId: user.branchId,
+            actorId: user.userId,
+            ...(user.deviceId ? { deviceId: user.deviceId } : {}),
+          },
+        ),
+      );
+      return updated;
     });
-    const updated = await this.recompute(orderId);
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.item.void',
@@ -351,13 +398,6 @@ export class OrdersService {
       oldValue: item,
       ...(dto.reason ? { reason: dto.reason } : {}),
       ...this.provenance(user),
-    });
-    await this.publishOrderItemEvent(user, DomainEventName.OrderItemVoided, {
-      orderId,
-      orderItemId: itemId,
-      productId: item.productId,
-      quantity: item.quantity,
-      lineTotal: item.lineTotal,
     });
     await this.publishOrderEvent(user, DomainEventName.OrderUpdated, updated);
     return this.orderWithItems(orderId);
@@ -394,13 +434,15 @@ export class OrdersService {
         message: 'Yalnizca bekleyen adisyon tekrar acilabilir.',
       });
     }
+    await this.requireOpenCashSession(user.branchId);
     // Masasi baska acik adisyona kapildiysa engelle.
     if (order.tableId) {
       const clash = await this.prisma.order.findFirst({
         where: {
           branchId: user.branchId,
           tableId: order.tableId,
-          status: OrderStatus.Open,
+          status: { in: [OrderStatus.Open, OrderStatus.Held] },
+          id: { not: order.id },
           deletedAt: null,
         },
       });
@@ -438,7 +480,7 @@ export class OrdersService {
       where: {
         branchId: user.branchId,
         tableId: targetTableId,
-        status: OrderStatus.Open,
+        status: { in: [OrderStatus.Open, OrderStatus.Held] },
         deletedAt: null,
       },
     });
@@ -503,7 +545,7 @@ export class OrdersService {
       });
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    const updatedTarget = await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.updateMany({
         where: { orderId: sourceOrderId, deletedAt: null },
         data: { orderId: targetOrderId, version: { increment: 1 }, syncState: 'pending' },
@@ -523,9 +565,9 @@ export class OrdersService {
           syncState: 'pending',
         },
       });
+      await this.recompute(sourceOrderId, tx);
+      return this.recompute(targetOrderId, tx);
     });
-    await this.recompute(sourceOrderId); // 0 kalem kaldi -> toplamlar sifirlanir
-    const updatedTarget = await this.recompute(targetOrderId);
     if (source.tableId) await this.freeTableIfNoOpenOrder(user.branchId, source.tableId);
 
     await this.audit.record({
@@ -580,7 +622,7 @@ export class OrdersService {
         where: {
           branchId: user.branchId,
           tableId: dto.targetTableId,
-          status: OrderStatus.Open,
+          status: { in: [OrderStatus.Open, OrderStatus.Held] },
           deletedAt: null,
         },
       });
@@ -593,7 +635,7 @@ export class OrdersService {
     }
 
     const newOrderId = newId();
-    await this.prisma.$transaction(async (tx) => {
+    const { updatedSource, newOrder } = await this.prisma.$transaction(async (tx) => {
       const orderNo = await this.generateOrderNo(tx, user.branchId);
       await tx.order.create({
         data: {
@@ -620,9 +662,11 @@ export class OrdersService {
           data: { status: TableStatus.Occupied, version: { increment: 1 }, syncState: 'pending' },
         });
       }
+      return {
+        updatedSource: await this.recompute(sourceOrderId, tx),
+        newOrder: await this.recompute(newOrderId, tx),
+      };
     });
-    const updatedSource = await this.recompute(sourceOrderId);
-    const newOrder = await this.recompute(newOrderId);
 
     await this.audit.record({
       branchId: user.branchId,
@@ -654,8 +698,52 @@ export class OrdersService {
   // yazdirma modulu hazirlik fisi basar.
   async sendToKitchen(user: AuthUser, orderId: string) {
     await this.orderOpenOrThrow(user.branchId, orderId);
-    const pending = await this.prisma.orderItem.findMany({
-      where: { orderId, status: OrderItemStatus.Pending, deletedAt: null },
+    const pending = await this.prisma.$transaction(async (tx) => {
+      const candidates = await tx.orderItem.findMany({
+        where: { orderId, status: OrderItemStatus.Pending, deletedAt: null },
+      });
+      const claimed: typeof candidates = [];
+      for (const item of candidates) {
+        const updated = await tx.orderItem.updateMany({
+          where: {
+            id: item.id,
+            orderId,
+            status: OrderItemStatus.Pending,
+            deletedAt: null,
+            version: item.version,
+          },
+          data: {
+            status: OrderItemStatus.Sent,
+            sentToKitchenAt: new Date(),
+            version: { increment: 1 },
+            syncState: 'pending',
+          },
+        });
+        if (updated.count === 1) claimed.push(item);
+      }
+      if (claimed.length) {
+        await this.events.publishDurable(
+          tx,
+          createDomainEvent(
+            DomainEventName.OrderItemSent,
+            {
+              orderId,
+              items: claimed.map((item) => ({
+                orderItemId: item.id,
+                productId: item.productId,
+                productName: item.productNameSnapshot,
+                quantity: item.quantity,
+              })),
+            },
+            {
+              branchId: user.branchId,
+              actorId: user.userId,
+              ...(user.deviceId ? { deviceId: user.deviceId } : {}),
+            },
+          ),
+        );
+      }
+      return claimed;
     });
     if (pending.length === 0) {
       throw new ConflictException({
@@ -663,15 +751,6 @@ export class OrdersService {
         message: 'Mutfaga iletilecek yeni kalem yok.',
       });
     }
-    await this.prisma.orderItem.updateMany({
-      where: { orderId, status: OrderItemStatus.Pending, deletedAt: null },
-      data: {
-        status: OrderItemStatus.Sent,
-        sentToKitchenAt: new Date(),
-        version: { increment: 1 },
-        syncState: 'pending',
-      },
-    });
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.send_kitchen',
@@ -681,25 +760,6 @@ export class OrdersService {
       newValue: { sentItemIds: pending.map((i) => i.id) },
       ...this.provenance(user),
     });
-    await this.events.publish(
-      createDomainEvent(
-        DomainEventName.OrderItemSent,
-        {
-          orderId,
-          items: pending.map((i) => ({
-            orderItemId: i.id,
-            productId: i.productId,
-            productName: i.productNameSnapshot,
-            quantity: i.quantity,
-          })),
-        },
-        {
-          branchId: user.branchId,
-          actorId: user.userId,
-          ...(user.deviceId ? { deviceId: user.deviceId } : {}),
-        },
-      ),
-    );
     return this.orderWithItems(orderId);
   }
 
@@ -743,20 +803,22 @@ export class OrdersService {
     }
 
     const id = newId();
-    const discount = await this.prisma.orderDiscount.create({
-      data: {
-        id,
-        orderId,
-        type: dto.type,
-        value: dto.value,
-        amount,
-        appliedBy: user.userId,
-        reason: dto.reason ?? null,
-        approvedBy: hasFull ? user.userId : null,
-        ...this.provenance(user),
-      },
+    const { discount, updated } = await this.prisma.$transaction(async (tx) => {
+      const discount = await tx.orderDiscount.create({
+        data: {
+          id,
+          orderId,
+          type: dto.type,
+          value: dto.value,
+          amount,
+          appliedBy: user.userId,
+          reason: dto.reason ?? null,
+          approvedBy: hasFull ? user.userId : null,
+          ...this.provenance(user),
+        },
+      });
+      return { discount, updated: await this.recompute(orderId, tx) };
     });
-    const updated = await this.recompute(orderId);
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.discount.apply',
@@ -779,11 +841,13 @@ export class OrdersService {
     if (!discount) {
       throw new NotFoundException({ code: 'DISCOUNT_NOT_FOUND', message: 'Indirim bulunamadi.' });
     }
-    await this.prisma.orderDiscount.update({
-      where: { id: discountId },
-      data: { deletedAt: new Date(), version: { increment: 1 }, syncState: 'pending' },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderDiscount.update({
+        where: { id: discountId },
+        data: { deletedAt: new Date(), version: { increment: 1 }, syncState: 'pending' },
+      });
+      return this.recompute(orderId, tx);
     });
-    const updated = await this.recompute(orderId);
     await this.audit.record({
       branchId: user.branchId,
       action: 'order.discount.remove',
@@ -829,14 +893,14 @@ export class OrdersService {
     }
   }
 
-  private async recompute(orderId: string) {
-    const items = await this.prisma.orderItem.findMany({
+  private async recompute(orderId: string, db: Prisma.TransactionClient = this.prisma) {
+    const items = await db.orderItem.findMany({
       where: { orderId, deletedAt: null, status: { not: OrderItemStatus.Cancelled } },
       select: { lineTotal: true, lineDiscount: true, taxRatePermille: true },
     });
     // Adisyon-seviyesi indirimler (satir indirimine EK). taxTotal bilgi amacli
     // satir bazinda kalir (ponytail: bilgi fisi, resmi mali degil).
-    const orderDiscounts = await this.prisma.orderDiscount.findMany({
+    const orderDiscounts = await db.orderDiscount.findMany({
       where: { orderId, deletedAt: null },
       select: { amount: true },
     });
@@ -844,7 +908,29 @@ export class OrdersService {
       computeItemTotals(items),
       orderDiscounts.map((d) => d.amount),
     );
-    return this.prisma.order.update({
+    if (totals.discountTotal > totals.subtotal || totals.grandTotal < 0) {
+      throw new ConflictException({
+        code: 'DISCOUNT_EXCEEDS',
+        message: 'Toplam indirim ara toplami asamaz.',
+      });
+    }
+    const paymentTotals = await db.payment.groupBy({
+      by: ['direction'],
+      where: { orderId, deletedAt: null },
+      _sum: { amount: true },
+    });
+    const paid = paymentTotals.reduce(
+      (sum, row) =>
+        sum + (row.direction === PaymentDirection.Refund ? -1 : 1) * (row._sum.amount ?? 0),
+      0,
+    );
+    if (totals.grandTotal < paid) {
+      throw new ConflictException({
+        code: 'ORDER_PAID_EXCEEDS_TOTAL',
+        message: 'Yeni toplam alinan odemenin altina inemez; once odemeyi iade edin.',
+      });
+    }
+    return db.order.update({
       where: { id: orderId },
       data: {
         ...totals,
@@ -878,7 +964,12 @@ export class OrdersService {
 
   private async freeTableIfNoOpenOrder(branchId: string, tableId: string): Promise<void> {
     const stillOpen = await this.prisma.order.count({
-      where: { branchId, tableId, status: OrderStatus.Open, deletedAt: null },
+      where: {
+        branchId,
+        tableId,
+        status: { in: [OrderStatus.Open, OrderStatus.Held] },
+        deletedAt: null,
+      },
     });
     if (stillOpen === 0) {
       await this.prisma.table.update({
@@ -911,7 +1002,24 @@ export class OrdersService {
     if (order.status !== OrderStatus.Open) {
       throw new ConflictException({ code: 'ORDER_NOT_OPEN', message: 'Adisyon acik degil.' });
     }
+    await this.requireOpenCashSession(branchId);
     return order;
+  }
+
+  private async requireOpenCashSession(
+    branchId: string,
+    db: Pick<Prisma.TransactionClient, 'cashSession'> = this.prisma,
+  ): Promise<void> {
+    const session = await db.cashSession.findFirst({
+      where: { branchId, status: 'open', deletedAt: null },
+      select: { id: true },
+    });
+    if (!session) {
+      throw new ConflictException({
+        code: 'CASH_SESSION_REQUIRED',
+        message: 'Yeni adisyon veya sipariş işlemi için önce kasa oturumu açılmalıdır.',
+      });
+    }
   }
 
   private async orderWithItems(id: string) {

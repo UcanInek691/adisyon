@@ -26,32 +26,42 @@ export default function OrderScreen() {
   const { id = '' } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const [activeCat, setActiveCat] = useState<string>('');
+  const [activeCat, setActiveCat] = useState('');
+  const [search, setSearch] = useState('');
   const [error, setError] = useState('');
   const [payOpen, setPayOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [transfer, setTransfer] = useState<'move' | 'merge' | null>(null);
   const [splitOpen, setSplitOpen] = useState(false);
-
-  // local: -> offline acilan taslak; sunucu id yerine IndexedDB'den okunur.
   const local = isLocalId(id);
-  // Canli tazeleme SSE'den gelir; 30 sn polling SSE koparsa emniyet kemeri.
+
   useLiveEvents();
   const order = useQuery({
     queryKey: ['order', id],
     queryFn: (): Promise<Order & { serverId?: string }> =>
       local ? readLocalOrder(id) : api<Order>(`/orders/${id}`),
-    refetchInterval: local ? 2_000 : 30_000, // local: sync sonrasi serverId'yi yakala
+    refetchInterval: local ? 2_000 : 30_000,
   });
   const categories = useQuery({ queryKey: ['categories'], queryFn: readCategories });
   const products = useQuery({ queryKey: ['products', 'active'], queryFn: readProducts });
-
+  const cashStatus = useQuery({
+    queryKey: ['cash', 'status'],
+    queryFn: () => api<{ open: boolean }>('/cash/status'),
+    retry: false,
+    refetchInterval: 30_000,
+  });
   const refresh = () => qc.invalidateQueries({ queryKey: ['order', id] });
-  const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'İşlem başarısız.');
+  const fail = (value: unknown) =>
+    setError(value instanceof ApiError ? value.message : 'İşlem başarısız.');
 
   const addItem = useMutation({
-    mutationFn: (p: Product) => {
-      if (local) return offlineAddLine(id, { id: p.id, name: p.name, salePrice: p.salePrice });
+    mutationFn: (product: Product) => {
+      if (local)
+        return offlineAddLine(id, {
+          id: product.id,
+          name: product.name,
+          salePrice: product.salePrice,
+        });
       if (isOffline())
         throw new ApiError(
           0,
@@ -60,7 +70,7 @@ export default function OrderScreen() {
         );
       return api(`/orders/${id}/items`, {
         method: 'POST',
-        body: { productId: p.id, quantity: 1000 },
+        body: { productId: product.id, quantity: 1000 },
       });
     },
     onSuccess: refresh,
@@ -73,13 +83,10 @@ export default function OrderScreen() {
     onError: fail,
   });
   const updateQty = useMutation({
-    mutationFn: (v: { itemId: string; quantity: number }) =>
+    mutationFn: ({ itemId, quantity }: { itemId: string; quantity: number }) =>
       local
-        ? offlineUpdateQty(id, v.itemId, v.quantity)
-        : api(`/orders/${id}/items/${v.itemId}`, {
-            method: 'PATCH',
-            body: { quantity: v.quantity },
-          }),
+        ? offlineUpdateQty(id, itemId, quantity)
+        : api(`/orders/${id}/items/${itemId}`, { method: 'PATCH', body: { quantity } }),
     onSuccess: refresh,
     onError: fail,
   });
@@ -93,7 +100,10 @@ export default function OrderScreen() {
   });
   const voidItem = useMutation({
     mutationFn: (itemId: string) =>
-      api(`/orders/${id}/items/${itemId}/void`, { method: 'POST', body: { reason: 'düzeltme' } }),
+      api(`/orders/${id}/items/${itemId}/void`, {
+        method: 'POST',
+        body: { reason: 'düzeltme' },
+      }),
     onSuccess: refresh,
     onError: fail,
   });
@@ -105,26 +115,31 @@ export default function OrderScreen() {
     },
     onError: fail,
   });
-  // Ödeme öncesi hesap/adisyon fişi (bilgi fişi). Ödeme almaz.
   const printBill = useMutation({
     mutationFn: () => api(`/printers/order/${id}/bill`, { method: 'POST' }),
     onError: fail,
   });
-  const o = order.data;
-  // Sync sonrasi taslak gercek order id kazandi -> sunucu adisyonuna gec, taslagi sil.
+
+  const currentOrder = order.data;
   useEffect(() => {
-    if (local && o?.serverId) {
+    if (local && currentOrder?.serverId) {
       void draftDelete(id);
-      nav(`/orders/${o.serverId}`, { replace: true });
+      nav(`/orders/${currentOrder.serverId}`, { replace: true });
     }
-  }, [local, o?.serverId, id, nav]);
+  }, [local, currentOrder?.serverId, id, nav]);
+
   const cats = categories.data ?? [];
   const cat = activeCat || cats[0]?.id || '';
-  const catProducts = (products.data ?? []).filter((p) => p.categoryId === cat);
+  const query = search.trim().toLocaleLowerCase('tr-TR');
+  const visibleProducts = (products.data ?? []).filter((product) =>
+    query ? product.name.toLocaleLowerCase('tr-TR').includes(query) : product.categoryId === cat,
+  );
   const canPay = hasPerm('payment.take');
   const canVoid = hasPerm('order.cancel');
-  const hasPending = (o?.items ?? []).some((i) => i.status === 'pending');
+  const hasPending = (currentOrder?.items ?? []).some((item) => item.status === 'pending');
+  const cashBlocked = cashStatus.data?.open === false;
   const busy =
+    cashBlocked ||
     addItem.isPending ||
     sendKitchen.isPending ||
     updateQty.isPending ||
@@ -132,112 +147,226 @@ export default function OrderScreen() {
     voidItem.isPending;
 
   return (
-    <div className="flex h-full flex-col bg-slate-100 md:flex-row">
-      {/* Sol: adisyon */}
-      <aside className="flex w-full flex-col bg-white shadow md:w-80">
-        <header className="border-b px-4 py-3">
-          <div className="flex items-center gap-2">
+    <div className="flex h-full min-h-0 flex-col bg-[#f5f5f2] md:flex-row">
+      <main className="order-1 flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="border-b border-stone-200/80 bg-[#f5f5f2]/95 px-4 py-3 backdrop-blur sm:px-5">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => nav('/')}
-              className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
+              aria-label="Masa planına dön"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-xl text-ink-800 shadow-sm transition hover:bg-stone-50"
             >
               ←
             </button>
-            <span className="text-lg font-bold text-slate-800">Adisyon {o?.orderNo ?? ''}</span>
-            {o?.type === 'delivery' && (
-              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">
-                🛵 Paket
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold tracking-[0.16em] text-brand-700 uppercase">
+                Ürün seçimi
+              </p>
+              <h1 className="truncate text-lg font-black text-ink-900 sm:text-xl">
+                Siparişe ürün ekle
+              </h1>
+            </div>
+            <label className="relative hidden w-full max-w-xs xl:block">
+              <span className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-stone-400">
+                ⌕
               </span>
-            )}
-            {o?.type === 'takeaway' && (
-              <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-semibold text-teal-700">
-                🥡 Gel-Al
-              </span>
-            )}
-            <SyncBadge />
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Ürün ara"
+                className="h-11 w-full rounded-xl border border-stone-200 bg-white pr-3 pl-9 text-sm font-medium text-ink-900 shadow-sm placeholder:text-stone-400"
+              />
+            </label>
           </div>
-          {o?.status === 'open' && o.tableId && !local && (
-            <div className="mt-2 flex gap-2">
-              <button
-                onClick={() => setTransfer('move')}
-                className="flex-1 rounded-lg bg-slate-100 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
-              >
-                Taşı
-              </button>
-              <button
-                onClick={() => setTransfer('merge')}
-                className="flex-1 rounded-lg bg-slate-100 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
-              >
-                Birleştir
-              </button>
-              {(o?.items ?? []).length >= 2 && (
-                <button
-                  onClick={() => setSplitOpen(true)}
-                  className="flex-1 rounded-lg bg-slate-100 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200"
-                >
-                  Böl
+          <input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Ürün ara"
+            className="mt-3 h-11 w-full rounded-xl border border-stone-200 bg-white px-3 text-sm font-medium text-ink-900 shadow-sm placeholder:text-stone-400 xl:hidden"
+          />
+          {cashBlocked && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <span>Kasa kapalı; bu adisyonda işlem yapılamaz.</span>
+              {hasPerm('cash.manage') && (
+                <button onClick={() => nav('/cash')} className="shrink-0 font-black underline">
+                  Kasaya git
                 </button>
               )}
             </div>
           )}
         </header>
 
-        <ul className="flex-1 overflow-auto p-2">
-          {(o?.items ?? []).length === 0 && (
-            <li className="p-4 text-center text-slate-400">Henüz kalem yok</li>
+        <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-stone-200 bg-white px-4 py-3 sm:px-5">
+          {cats.map((category) => (
+            <button
+              key={category.id}
+              data-testid={`category-${category.id}`}
+              onClick={() => {
+                setSearch('');
+                setActiveCat(category.id);
+              }}
+              className={`min-h-10 whitespace-nowrap rounded-xl px-4 text-sm font-bold transition ${
+                !query && category.id === cat
+                  ? 'bg-ink-900 text-white'
+                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+              }`}
+            >
+              {category.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid flex-1 auto-rows-[minmax(112px,auto)] grid-cols-2 content-start gap-3 overflow-auto p-4 sm:grid-cols-3 sm:p-5 xl:grid-cols-4 2xl:grid-cols-5">
+          {visibleProducts.map((product) => (
+            <button
+              key={product.id}
+              data-testid={`product-${product.id}`}
+              onClick={() => addItem.mutate(product)}
+              disabled={busy}
+              className="group relative flex min-h-28 flex-col items-start justify-between overflow-hidden rounded-2xl border border-stone-200 bg-white p-4 text-left shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-brand-500 hover:shadow-panel active:translate-y-0 disabled:opacity-50"
+            >
+              <span className="line-clamp-2 pr-7 text-sm font-bold text-ink-900 sm:text-base">
+                {product.name}
+              </span>
+              <span className="text-sm font-black text-brand-700">
+                {formatKurus(product.salePrice)}
+              </span>
+              <span className="absolute top-3 right-3 flex h-7 w-7 items-center justify-center rounded-full bg-brand-50 text-lg font-semibold text-brand-700 transition group-hover:bg-brand-600 group-hover:text-white">
+                +
+              </span>
+            </button>
+          ))}
+          {visibleProducts.length === 0 && !products.isLoading && (
+            <div className="col-span-full rounded-2xl border border-dashed border-stone-300 bg-white/50 p-8 text-center">
+              <p className="font-bold text-ink-800">Ürün bulunamadı</p>
+              <p className="mt-1 text-sm text-stone-500">Başka bir kategori veya arama deneyin.</p>
+            </div>
           )}
-          {(o?.items ?? []).map((it) => {
-            const pending = it.status === 'pending';
+        </div>
+      </main>
+
+      <aside className="order-2 flex max-h-[52%] min-h-0 w-full shrink-0 flex-col border-t border-stone-200 bg-white shadow-[-12px_0_30px_rgba(21,32,29,0.04)] md:h-full md:max-h-none md:w-[360px] md:border-t-0 md:border-l xl:w-[390px]">
+        <header className="border-b border-stone-200 px-4 py-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-black text-ink-900">
+                  Adisyon {currentOrder?.orderNo ?? ''}
+                </h2>
+                {currentOrder?.type !== 'dine_in' && (
+                  <span
+                    className={`rounded-full px-2 py-1 text-[10px] font-bold tracking-wide uppercase ${
+                      currentOrder?.type === 'delivery'
+                        ? 'bg-sky-100 text-sky-700'
+                        : 'bg-brand-100 text-brand-700'
+                    }`}
+                  >
+                    {currentOrder?.type === 'delivery' ? 'Paket' : 'Gel-al'}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-xs text-stone-500">
+                {(currentOrder?.items ?? []).length} kalem
+              </p>
+            </div>
+            <SyncBadge />
+          </div>
+          {currentOrder?.status === 'open' && currentOrder.tableId && !local && (
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <SmallAction onClick={() => setTransfer('move')}>Taşı</SmallAction>
+              <SmallAction onClick={() => setTransfer('merge')}>Birleştir</SmallAction>
+              <SmallAction
+                onClick={() => setSplitOpen(true)}
+                disabled={(currentOrder?.items ?? []).length < 2}
+              >
+                Böl
+              </SmallAction>
+            </div>
+          )}
+        </header>
+
+        <ul className="min-h-0 flex-1 space-y-2 overflow-auto bg-stone-50/70 p-3">
+          {(currentOrder?.items ?? []).length === 0 && (
+            <li className="flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-stone-300 bg-white text-center">
+              <span className="text-sm font-bold text-ink-800">Adisyon boş</span>
+              <span className="mt-1 text-xs text-stone-500">Soldan bir ürün seçerek başlayın.</span>
+            </li>
+          )}
+          {(currentOrder?.items ?? []).map((item) => {
+            const pending = item.status === 'pending';
             return (
-              <li key={it.id} data-testid="order-item" className="border-b px-2 py-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-slate-800">{it.productNameSnapshot}</span>
-                  <span className="font-semibold text-slate-700">{formatKurus(it.lineTotal)}</span>
+              <li
+                key={item.id}
+                data-testid="order-item"
+                className="rounded-2xl border border-stone-200 bg-white p-3 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="block truncate text-sm font-bold text-ink-900">
+                      {item.productNameSnapshot}
+                    </span>
+                    {!pending && (
+                      <span className="mt-0.5 block text-[10px] font-bold tracking-wide text-brand-700 uppercase">
+                        Mutfağa gönderildi
+                      </span>
+                    )}
+                  </div>
+                  <span className="shrink-0 text-sm font-black text-ink-900">
+                    {formatKurus(item.lineTotal)}
+                  </span>
                 </div>
-                <div className="mt-1 flex items-center gap-2">
+                <div className="mt-3 flex items-center gap-2">
                   {pending ? (
                     <>
-                      <button
+                      <QtyButton
+                        label="Azalt"
                         onClick={() =>
-                          it.quantity <= 1000
-                            ? removeItem.mutate(it.id)
-                            : updateQty.mutate({ itemId: it.id, quantity: it.quantity - 1000 })
+                          item.quantity <= 1000
+                            ? removeItem.mutate(item.id)
+                            : updateQty.mutate({
+                                itemId: item.id,
+                                quantity: item.quantity - 1000,
+                              })
                         }
                         disabled={busy}
-                        className="h-8 w-8 rounded-lg bg-slate-200 text-lg font-bold text-slate-700"
                       >
                         −
-                      </button>
-                      <span className="min-w-8 text-center font-medium">
-                        {formatQty(it.quantity)}
+                      </QtyButton>
+                      <span className="min-w-9 text-center text-sm font-black text-ink-900">
+                        {formatQty(item.quantity)}
                       </span>
-                      <button
+                      <QtyButton
+                        label="Artır"
                         onClick={() =>
-                          updateQty.mutate({ itemId: it.id, quantity: it.quantity + 1000 })
+                          updateQty.mutate({
+                            itemId: item.id,
+                            quantity: item.quantity + 1000,
+                          })
                         }
                         disabled={busy}
-                        className="h-8 w-8 rounded-lg bg-slate-200 text-lg font-bold text-slate-700"
                       >
                         +
-                      </button>
+                      </QtyButton>
                       <button
-                        onClick={() => removeItem.mutate(it.id)}
+                        onClick={() => removeItem.mutate(item.id)}
                         disabled={busy}
-                        className="ml-auto rounded-lg px-2 text-sm font-medium text-red-600"
+                        className="ml-auto min-h-10 rounded-xl px-3 text-xs font-bold text-red-600 hover:bg-red-50"
                       >
                         Sil
                       </button>
                     </>
                   ) : (
                     <>
-                      <span className="text-xs text-slate-400">
-                        {formatQty(it.quantity)} • gönderildi
+                      <span className="text-xs font-semibold text-stone-500">
+                        {formatQty(item.quantity)} adet
                       </span>
                       {canVoid && (
                         <button
-                          onClick={() => voidItem.mutate(it.id)}
+                          onClick={() => voidItem.mutate(item.id)}
                           disabled={busy}
-                          className="ml-auto rounded-lg px-2 text-sm font-medium text-red-600"
+                          className="ml-auto min-h-10 rounded-xl px-3 text-xs font-bold text-red-600 hover:bg-red-50"
                         >
                           İptal
                         </button>
@@ -250,116 +379,93 @@ export default function OrderScreen() {
           })}
         </ul>
 
-        <div className="border-t bg-slate-50 p-4">
-          {(o?.discountTotal ?? 0) > 0 && (
-            <div className="mb-1 flex items-center justify-between text-sm text-slate-500">
+        <div className="border-t border-stone-200 bg-white p-4">
+          {(currentOrder?.discountTotal ?? 0) > 0 && (
+            <div className="mb-1 flex items-center justify-between text-sm text-stone-500">
               <span>İndirim</span>
-              <span>−{formatKurus(o?.discountTotal ?? 0)}</span>
+              <span>−{formatKurus(currentOrder?.discountTotal ?? 0)}</span>
             </div>
           )}
-          <div className="mb-3 flex items-baseline justify-between">
-            <span className="text-sm font-medium text-slate-500">Toplam</span>
-            <span className="text-2xl font-extrabold text-slate-800">
-              {formatKurus(o?.grandTotal ?? 0)}
+          <div className="mb-3 flex items-end justify-between">
+            <span className="text-xs font-bold tracking-wide text-stone-500 uppercase">Toplam</span>
+            <span className="text-3xl font-black tracking-tight text-ink-900">
+              {formatKurus(currentOrder?.grandTotal ?? 0)}
             </span>
           </div>
-          {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-          <div className="mb-2 grid grid-cols-2 gap-2">
-            <button
+          {error && (
+            <p className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+              {error}
+            </p>
+          )}
+          <div className="mb-2 grid grid-cols-3 gap-2">
+            <SmallAction
               onClick={() => setDiscountOpen(true)}
-              disabled={busy || local || !o || o.status !== 'open'}
-              className="rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
+              disabled={busy || local || !currentOrder || currentOrder.status !== 'open'}
             >
               İndirim
-            </button>
-            <button
+            </SmallAction>
+            <SmallAction
               onClick={() => hold.mutate()}
-              disabled={busy || local || hold.isPending || !o || o.status !== 'open'}
-              className="rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
+              disabled={
+                busy || local || hold.isPending || !currentOrder || currentOrder.status !== 'open'
+              }
             >
               Beklet
-            </button>
+            </SmallAction>
+            <SmallAction
+              onClick={() => printBill.mutate()}
+              disabled={
+                busy ||
+                local ||
+                printBill.isPending ||
+                !currentOrder ||
+                (currentOrder?.items ?? []).length === 0
+              }
+            >
+              {printBill.isPending ? 'Yazılıyor…' : 'Hesap'}
+            </SmallAction>
           </div>
-          <button
-            onClick={() => printBill.mutate()}
-            disabled={busy || local || printBill.isPending || !o || (o?.items ?? []).length === 0}
-            className="mb-2 w-full rounded-xl bg-white py-2.5 font-medium text-slate-700 shadow-sm transition active:scale-95 disabled:opacity-40"
-          >
-            🧾 {printBill.isPending ? 'Yazdırılıyor…' : 'Hesap Yazdır'}
-          </button>
           <div className={`grid gap-2 ${canPay ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <button
               data-testid="send-kitchen"
               onClick={() => sendKitchen.mutate()}
               disabled={busy || !hasPending}
-              className="rounded-xl bg-blue-600 py-3.5 font-bold text-white shadow-sm transition active:scale-95 hover:bg-blue-700 disabled:opacity-40"
+              className="min-h-14 rounded-2xl bg-ink-900 px-3 text-sm font-black text-white transition hover:bg-ink-800 active:scale-[0.98] disabled:opacity-35"
             >
-              Mutfağa Gönder
+              Mutfağa gönder
             </button>
             {canPay && (
               <button
                 onClick={() => setPayOpen(true)}
-                disabled={busy || local || !o || o.grandTotal <= 0}
-                className="rounded-xl bg-green-600 py-3.5 font-bold text-white shadow-sm transition active:scale-95 hover:bg-green-700 disabled:opacity-40"
+                disabled={busy || local || !currentOrder || currentOrder.grandTotal <= 0}
+                className="min-h-14 rounded-2xl bg-brand-600 px-3 text-sm font-black text-white transition hover:bg-brand-700 active:scale-[0.98] disabled:opacity-35"
               >
-                Öde
+                Ödeme al
               </button>
             )}
           </div>
         </div>
       </aside>
 
-      {/* Sag: urun grid */}
-      <main className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex gap-2 overflow-x-auto border-b bg-white px-4 py-2">
-          {cats.map((c) => (
-            <button
-              key={c.id}
-              data-testid={`category-${c.id}`}
-              onClick={() => setActiveCat(c.id)}
-              className={`whitespace-nowrap rounded-lg px-4 py-2 font-medium ${
-                c.id === cat ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-        <div className="grid flex-1 grid-cols-2 content-start gap-3 overflow-auto p-4 sm:grid-cols-3 lg:grid-cols-4">
-          {catProducts.map((p) => (
-            <button
-              key={p.id}
-              data-testid={`product-${p.id}`}
-              onClick={() => addItem.mutate(p)}
-              disabled={busy}
-              className="flex aspect-square flex-col items-center justify-center rounded-xl bg-white p-2 text-center shadow disabled:opacity-50"
-            >
-              <span className="font-medium text-slate-800">{p.name}</span>
-              <span className="mt-1 text-sm text-slate-500">{formatKurus(p.salePrice)}</span>
-            </button>
-          ))}
-        </div>
-      </main>
-
-      {payOpen && o && (
+      {payOpen && currentOrder && (
         <PaymentModal
           orderId={id}
-          grandTotal={o.grandTotal}
+          grandTotal={currentOrder.grandTotal}
           onClose={() => setPayOpen(false)}
           onCompleted={() => nav('/', { replace: true })}
         />
       )}
-      {discountOpen && o && (
+      {discountOpen && currentOrder && (
         <DiscountModal
           orderId={id}
-          discounts={o.discounts ?? []}
+          discounts={currentOrder.discounts ?? []}
           onClose={() => setDiscountOpen(false)}
         />
       )}
-      {transfer && o && (
+      {transfer && currentOrder && (
         <TableTransferModal
           orderId={id}
-          currentTableId={o.tableId}
+          currentTableId={currentOrder.tableId}
           mode={transfer}
           onClose={() => setTransfer(null)}
           onDone={() => {
@@ -368,10 +474,10 @@ export default function OrderScreen() {
           }}
         />
       )}
-      {splitOpen && o && (
+      {splitOpen && currentOrder && (
         <SplitModal
           orderId={id}
-          items={o.items}
+          items={currentOrder.items}
           onClose={() => setSplitOpen(false)}
           onDone={(createdOrderId) => {
             setSplitOpen(false);
@@ -380,5 +486,48 @@ export default function OrderScreen() {
         />
       )}
     </div>
+  );
+}
+
+function SmallAction({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="min-h-10 rounded-xl border border-stone-200 bg-white px-2 text-xs font-bold text-stone-600 transition hover:bg-stone-50 disabled:opacity-35"
+    >
+      {children}
+    </button>
+  );
+}
+
+function QtyButton({
+  children,
+  label,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-100 text-lg font-black text-ink-900 transition hover:bg-stone-200 disabled:opacity-40"
+    >
+      {children}
+    </button>
   );
 }
