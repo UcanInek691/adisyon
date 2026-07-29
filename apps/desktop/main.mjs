@@ -17,7 +17,8 @@ import {
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-const PORT = process.env.API_PORT || '3001';
+// Paketli uygulama dev sunucusuna (3001) yanlislikla baglanmasin.
+const PORT = process.env.API_PORT || (app.isPackaged ? '43127' : '3001');
 const BASE = `http://127.0.0.1:${PORT}`;
 let backend = null;
 
@@ -164,7 +165,7 @@ async function waitUp(timeoutMs) {
 
 app.whenReady().then(async () => {
   try {
-    if (!(await isUp())) {
+    if (app.isPackaged || !(await isUp())) {
       // Dev'de backend'i kendin calistiriyorsan buraya dusmez.
       startBackend();
       if (!(await waitUp(30000))) {
@@ -178,7 +179,11 @@ app.whenReady().then(async () => {
     }
     const win = new BrowserWindow({ width: 1280, height: 800 });
     win.removeMenu();
-    win.loadURL(BASE);
+    // Desktop her zaman paketle gelen UI'yi acsin; eski PWA app-shell'i kalmasin.
+    await win.webContents.session.clearStorageData({
+      storages: ['serviceworkers', 'cachestorage'],
+    });
+    await win.loadURL(BASE);
   } catch (err) {
     // Sessiz cikis olmasin: hatayi goster, sonra kapan.
     dialog.showErrorBox('Uygulama başlatılamadı', String(err && err.stack ? err.stack : err));
